@@ -38,6 +38,7 @@ On the web the engine runs in an AudioWorklet (built by a Trunk pre-build hook i
 - **Key** (sidebar): locks a melodic track to a key and shows only in-key rows. If existing notes don't fit, you're asked whether to delete them or move them to the nearest in-key note.
 - Space: play/stop. Ctrl/Cmd+Z: undo; Ctrl/Cmd+Shift+Z: redo.
 - Your computer keyboard plays the selected track. On melodic tracks the home row (A S D F… on QWERTY, Q S D F… on AZERTY) plays white keys and the row above plays black keys; `-` / `=` change the octave. On drum tracks each home-row key plays one drum, in order: kick, snare, clap, rim, hi-hat, open hat, toms, crash. MIDI keyboards work natively.
+- **Recording:** select a track and press ⏺ Rec (or `R`) to record what you play on the keyboard or a MIDI keyboard. By default there's a one-bar count-in, a metronome, and notes snap to the grid; the ⏷ menu next to Rec turns each off. With Loop on, each pass adds notes on top. A whole take is one undo step.
 - File menu: save/open `.orch` songs and export WAV. The song also autosaves.
 
 ## Using songs in a Bevy game

@@ -1,6 +1,7 @@
 //! Realtime synthesis engine for Orchestre. Runs natively on the audio
 //! thread and in the browser inside an AudioWorklet.
 
+pub mod click;
 pub mod drums;
 pub mod engine;
 pub mod env;

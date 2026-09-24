@@ -181,3 +181,51 @@ fn loop_restart_plays_notes_on_the_first_beat() {
         assert!(hit > 0.05, "no kick at the start of loop {k} (peak {hit})");
     }
 }
+
+#[test]
+fn count_in_clicks_then_plays() {
+    let mut p = single_note(InstrumentChoice::Piano, 60);
+    p.tracks[0].notes.clear();
+    let mut e = Engine::new(SR as f32);
+    e.handle(Cmd::SetSong(Box::new(Song::from_project(&p))));
+    e.handle(Cmd::CountIn(4));
+    let beat = (orchestre_core::ticks_to_seconds(PPQ as f64, p.bpm as f64) * SR as f64) as usize;
+    let (mut l, mut r) = (vec![0.0; beat], vec![0.0; beat]);
+    let mut counts = Vec::new();
+    for i in 0..4 {
+        e.process(&mut l, &mut r);
+        assert!(peak(&l) > 0.1, "no click on count-in beat {i}");
+        assert!(
+            !e.is_playing() || i == 3,
+            "started before the count-in ended"
+        );
+        counts.extend(e.drain_events().filter_map(|ev| match ev {
+            Event::CountIn { beats_left } => Some(beats_left),
+            _ => None,
+        }));
+    }
+    e.process(&mut l[..256], &mut r[..256]);
+    assert_eq!(counts, vec![4, 3, 2, 1]);
+    assert!(e.is_playing());
+    assert!(
+        e.position() < PPQ as f64 / 4.0,
+        "playback should start at the beginning"
+    );
+}
+
+#[test]
+fn metronome_clicks_only_when_enabled() {
+    let mut p = single_note(InstrumentChoice::Piano, 60);
+    p.tracks[0].notes.clear();
+    let run = |on: bool| {
+        let mut e = Engine::new(SR as f32);
+        e.handle(Cmd::SetSong(Box::new(Song::from_project(&p))));
+        e.handle(Cmd::SetMetronome(on));
+        e.handle(Cmd::Play);
+        let (mut l, mut r) = (vec![0.0; 44100], vec![0.0; 44100]);
+        e.process(&mut l, &mut r);
+        peak(&l)
+    };
+    assert!(run(true) > 0.1);
+    assert!(run(false) < 1e-6);
+}

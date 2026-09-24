@@ -36,6 +36,9 @@ pub struct Song {
     /// Seconds of the echo effect (tempo-synced).
     pub delay_seconds: f32,
     pub length: Tick,
+    /// Ticks per beat and per bar (for the metronome).
+    pub beat: Tick,
+    pub bar: Tick,
     pub tracks: Vec<SongTrack>,
 }
 
@@ -45,6 +48,8 @@ impl Default for Song {
             bpm: 120.0,
             delay_seconds: 0.375,
             length: 0,
+            beat: orchestre_core::PPQ,
+            bar: 4 * orchestre_core::PPQ,
             tracks: Vec::new(),
         }
     }
@@ -86,6 +91,8 @@ impl Song {
             // Dotted eighth: the classic echo that sits well in most grooves.
             delay_seconds: 0.75 * 60.0 / p.bpm,
             length: p.length_ticks(),
+            beat: p.time_sig.beat_ticks(),
+            bar: p.time_sig.bar_ticks(),
             tracks,
         }
     }
@@ -122,6 +129,10 @@ pub enum Cmd {
         track: Id,
         pitch: u8,
     },
+    /// Click on every beat while playing.
+    SetMetronome(bool),
+    /// Click this many beats, then start playing from the current position.
+    CountIn(u32),
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
@@ -134,5 +145,9 @@ pub enum Event {
     Level {
         track: Id,
         peak: f32,
+    },
+    /// A count-in click; `beats_left` includes this one.
+    CountIn {
+        beats_left: u32,
     },
 }

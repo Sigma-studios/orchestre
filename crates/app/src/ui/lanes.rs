@@ -164,7 +164,18 @@ fn lane(app: &mut OrchestreApp, ui: &mut Ui, id: u64, index: usize) {
     hui.add_space(2.0);
     hui.vertical(|ui| {
         ui.add_space(3.0);
-        ui.label(RichText::new(&track.name).strong().color(Color32::WHITE));
+        let rec = app.rec.active && selected;
+        let name = if rec {
+            format!("⏺ {}", track.name)
+        } else {
+            track.name.clone()
+        };
+        let color = if rec {
+            Color32::from_rgb(240, 90, 90)
+        } else {
+            Color32::WHITE
+        };
+        ui.label(RichText::new(name).strong().color(color));
         ui.label(
             RichText::new(track.instrument.label())
                 .size(11.0)

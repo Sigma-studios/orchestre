@@ -1,5 +1,6 @@
 use orchestre_core::{Id, Instrument, PPQ, Tick};
 
+use crate::click::Click;
 use crate::drums::DrumEngine;
 use crate::fx::{Delay, Reverb};
 use crate::piano::PianoEngine;
@@ -89,6 +90,16 @@ pub struct Engine {
     master_peak: f32,
     /// Replaced songs, handed back so the owner can free them off the audio thread.
     garbage: Option<Box<Song>>,
+    metronome: bool,
+    count_in: Option<CountIn>,
+    click: Click,
+}
+
+/// Clicks counted before playback starts, in ticks.
+struct CountIn {
+    pos: f64,
+    len: f64,
+    beats: u32,
 }
 
 impl Engine {
@@ -107,6 +118,9 @@ impl Engine {
             since_report: 0,
             master_peak: 0.0,
             garbage: None,
+            metronome: false,
+            count_in: None,
+            click: Click::new(sample_rate),
         }
     }
 
@@ -147,6 +161,7 @@ impl Engine {
             }
             Cmd::Stop => {
                 self.playing = false;
+                self.count_in = None;
                 self.all_off();
                 self.report_position();
             }
@@ -158,6 +173,19 @@ impl Engine {
             Cmd::LiveNoteOn { track, pitch, vel } => {
                 if let Some(t) = self.tracks.iter_mut().find(|t| t.id == track) {
                     t.inst.note_on(pitch, vel, f64::INFINITY);
+                }
+            }
+            Cmd::SetMetronome(on) => self.metronome = on,
+            Cmd::CountIn(beats) => {
+                self.playing = false;
+                self.all_off();
+                self.count_in = (beats > 0).then(|| CountIn {
+                    pos: 0.0,
+                    len: beats as f64 * self.song.beat.max(1) as f64,
+                    beats,
+                });
+                if self.count_in.is_none() {
+                    self.handle(Cmd::Play);
                 }
             }
             Cmd::LiveNoteOff { track, pitch } => {
@@ -262,11 +290,52 @@ impl Engine {
     }
 
     /// Advance the transport by one block of `n` samples.
+    /// Count-in clicks; starts playback when done.
+    fn advance_count_in(&mut self, n: usize) {
+        let dt = self.ticks_per_sample() * n as f64;
+        let beat = self.song.beat.max(1) as f64;
+        let Some(ci) = &mut self.count_in else { return };
+        let prev = ci.pos;
+        ci.pos += dt;
+        let (b0, b1) = ((prev / beat).floor(), (ci.pos / beat).floor());
+        let click = if prev == 0.0 {
+            Some(0)
+        } else if b1 > b0 && ci.pos < ci.len {
+            Some(b1 as u32)
+        } else {
+            None
+        };
+        let (beats, done) = (ci.beats, ci.pos >= ci.len);
+        if let Some(i) = click {
+            self.click.trigger(i == 0);
+            self.push_event(Event::CountIn {
+                beats_left: beats - i,
+            });
+        }
+        if done {
+            self.count_in = None;
+            self.handle(Cmd::Play);
+            self.report_position();
+        }
+    }
+
     fn advance(&mut self, n: usize) {
+        if self.count_in.is_some() {
+            self.advance_count_in(n);
+            return;
+        }
         if !self.playing {
             return;
         }
         let end = self.pos + self.ticks_per_sample() * n as f64;
+        if self.metronome {
+            let beat = self.song.beat.max(1) as f64;
+            let next_beat = (self.pos / beat).ceil() * beat;
+            if next_beat < end {
+                let bar = self.song.bar.max(1);
+                self.click.trigger((next_beat as Tick) % bar == 0);
+            }
+        }
         // Don't trigger notes that lie past the loop end.
         let seq_end = match self.loop_range {
             Some((_, b)) => end.min(b as f64),
@@ -369,8 +438,9 @@ impl Engine {
             let (dl, dr) = self.delay.process(del_l[i], del_r[i]);
             // Echoes also feed the reverb a little so they sit in the same space.
             let (rl, rr) = self.reverb.process(rev[i] + (dl + dr) * 0.15);
-            let a = soft_clip((out_l[i] + dl + rl * 2.5) * 0.9);
-            let b = soft_clip((out_r[i] + dr + rr * 2.5) * 0.9);
+            let click = self.click.sample();
+            let a = soft_clip((out_l[i] + dl + rl * 2.5) * 0.9 + click);
+            let b = soft_clip((out_r[i] + dr + rr * 2.5) * 0.9 + click);
             self.master_peak = self.master_peak.max(a.abs()).max(b.abs());
             out_l[i] = a;
             out_r[i] = b;

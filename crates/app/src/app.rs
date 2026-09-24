@@ -117,7 +117,10 @@ pub struct OrchestreApp {
     loop_sent: Option<Option<(Tick, Tick)>>,
     /// Set whenever `project` is modified; drives undo checkpoints.
     changed: bool,
-    now: f64,
+    pub(crate) now: f64,
+    /// When the last position report arrived (for extrapolating the playhead).
+    pub(crate) position_time: f64,
+    pub rec: crate::record::Recorder,
 }
 
 impl OrchestreApp {
@@ -144,10 +147,26 @@ impl OrchestreApp {
         } else {
             None
         };
-        let mut app = OrchestreApp {
+        let mut app = Self::build(project, Audio::new());
+        app.selected = selected;
+        app.kb_layout = kb_layout;
+        app.kb_layout_manual = kb_layout_manual;
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            app.midi = crate::midi::Midi::connect(cc.egui_ctx.clone());
+        }
+        if first_run {
+            app.notify("Welcome! Press Space to play the demo song.");
+        }
+        app
+    }
+
+    /// The app state without any window or saved settings.
+    pub fn build(project: Project, audio: Audio) -> Self {
+        OrchestreApp {
             history: History::new(&project),
             project,
-            audio: Audio::new(),
+            audio,
             view: View {
                 zoom: 60.0,
                 scroll: 0.0,
@@ -155,7 +174,7 @@ impl OrchestreApp {
                 width: 800.0,
                 fitted: false,
             },
-            selected,
+            selected: None,
             selection: HashSet::new(),
             clipboard: Clip::default(),
             drag: None,
@@ -169,25 +188,23 @@ impl OrchestreApp {
             confirm_delete_track: None,
             renaming: None,
             octave: 4,
-            kb_layout,
-            kb_layout_manual,
+            kb_layout: Default::default(),
+            kb_layout_manual: false,
             held_keys: HashMap::new(),
             auditions: Vec::new(),
             toast: None,
             inbox: Inbox::default(),
             hover_tick: None,
             #[cfg(not(target_arch = "wasm32"))]
-            midi: crate::midi::Midi::connect(cc.egui_ctx.clone()),
+            midi: None,
             last_song: None,
             song_dirty: true,
             loop_sent: None,
             changed: false,
             now: 0.0,
-        };
-        if first_run {
-            app.notify("Welcome! Press Space to play the demo song.");
+            position_time: 0.0,
+            rec: Default::default(),
         }
-        app
     }
 
     /// Call after any change to `project`.
@@ -206,6 +223,7 @@ impl OrchestreApp {
 
     pub fn select_track(&mut self, id: Option<Id>) {
         if self.selected != id {
+            self.stop_recording();
             self.selection.clear();
             self.drag = None;
             self.release_held_keys();
@@ -224,12 +242,13 @@ impl OrchestreApp {
     }
 
     pub fn stop(&mut self) {
+        self.stop_recording();
         self.send(Cmd::Stop);
         self.playing = false;
     }
 
     pub fn toggle_play(&mut self) {
-        if self.playing {
+        if self.playing || self.rec.counting.is_some() {
             self.stop()
         } else {
             self.play()
@@ -262,9 +281,10 @@ impl OrchestreApp {
     }
 
     pub fn release_held_keys(&mut self) {
-        let held: Vec<(Id, u8)> = self.held_keys.drain().map(|(_, v)| v).collect();
-        for (track, pitch) in held {
+        let held: Vec<(egui::Key, (Id, u8))> = self.held_keys.drain().collect();
+        for (key, (track, pitch)) in held {
             self.send(Cmd::LiveNoteOff { track, pitch });
+            self.record_note_off(crate::record::Source::Key(key));
         }
     }
 
@@ -347,13 +367,24 @@ impl OrchestreApp {
     fn poll_audio(&mut self) {
         let mut position = None;
         let mut levels = Vec::new();
+        let mut count_in = None;
         self.audio.poll_events(|e| match e {
             Event::Position { tick, playing } => position = Some((tick, playing)),
             Event::Level { track, peak } => levels.push((track, peak)),
+            Event::CountIn { beats_left } => count_in = Some(beats_left),
         });
+        if let Some(beats) = count_in
+            && self.rec.active
+        {
+            self.rec.counting = Some(beats);
+        }
         if let Some((tick, playing)) = position {
             self.position = tick;
+            self.position_time = self.now;
             self.playing = playing;
+            if playing {
+                self.rec.counting = None;
+            }
         }
         for (track, peak) in levels {
             let l = self.levels.entry(track).or_insert(0.0);
@@ -364,6 +395,7 @@ impl OrchestreApp {
     fn tick(&mut self, ctx: &egui::Context) {
         self.now = ctx.input(|i| i.time);
         self.poll_audio();
+        self.update_recording();
 
         let now = self.now;
         let (due, keep): (Vec<_>, Vec<_>) = self.auditions.drain(..).partition(|a| a.2 <= now);
@@ -391,6 +423,7 @@ impl OrchestreApp {
         }
 
         let animating = self.playing
+            || self.rec.counting.is_some()
             || !self.auditions.is_empty()
             || self.toast.is_some()
             || self.levels.values().any(|&l| l > 0.001);
@@ -436,13 +469,25 @@ impl OrchestreApp {
                 Cmd::LiveNoteOff { track: id, pitch }
             };
             self.send(cmd);
+            let src = crate::record::Source::Midi(m.pitch);
+            if m.on {
+                self.record_note_on(src, pitch, m.vel);
+            } else {
+                self.record_note_off(src);
+            }
         }
     }
 
     /// End of frame: record an undo step once the user has finished an
     /// interaction (no mouse button held), so a whole drag is one step.
     fn checkpoint(&mut self, ctx: &egui::Context) {
-        let busy = ctx.input(|i| i.pointer.any_down()) || self.drag.is_some();
+        // A whole recording take is one undo step.
+        let pointer_down = ctx.input(|i| i.pointer.any_down());
+        self.commit_if_idle(pointer_down);
+    }
+
+    pub(crate) fn commit_if_idle(&mut self, pointer_down: bool) {
+        let busy = pointer_down || self.drag.is_some() || self.rec.active;
         if self.changed && !busy {
             self.changed = false;
             self.history.commit(&self.project);

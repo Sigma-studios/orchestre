@@ -8,6 +8,7 @@ use orchestre_core::{DrumPiece, Id, snap_floor, snap_round};
 use orchestre_dsp::Cmd;
 
 use crate::app::OrchestreApp;
+use crate::record::Source;
 
 /// Keyboard piano layout by key *position* (named after US QWERTY):
 /// home row = white keys, row above = black keys. Returns the semitone
@@ -201,6 +202,7 @@ fn command_key(app: &mut OrchestreApp, ctx: &egui::Context, key: Key, shift: boo
 fn plain_key(app: &mut OrchestreApp, key: Key, shift: bool, alt: bool) {
     match key {
         Key::Space => app.toggle_play(),
+        Key::R => app.toggle_record(),
         Key::Enter | Key::Home => app.seek(0.0),
         Key::Escape => {
             if app.selection.is_empty() {
@@ -268,8 +270,10 @@ fn piano_key_event(app: &mut OrchestreApp, key: Key, semi: i32, pressed: bool) {
             pitch,
             vel: 0.85,
         });
+        app.record_note_on(Source::Key(key), pitch, 0.85);
     } else if let Some((t, p)) = app.held_keys.remove(&key) {
         app.send(Cmd::LiveNoteOff { track: t, pitch: p });
+        app.record_note_off(Source::Key(key));
     }
 }
 

@@ -29,6 +29,13 @@ impl Audio {
         Audio { backend }
     }
 
+    /// No audio output at all (tests, headless use).
+    pub fn disabled() -> Audio {
+        Audio {
+            backend: Err("audio disabled".into()),
+        }
+    }
+
     pub fn send(&mut self, cmd: Cmd) {
         if let Ok(b) = &mut self.backend {
             b.send(cmd);

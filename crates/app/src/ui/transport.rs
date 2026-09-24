@@ -15,13 +15,15 @@ pub fn show(app: &mut OrchestreApp, ui: &mut Ui) {
                 file_menu(app, ui);
                 ui.separator();
 
-                let play_label = if app.playing { "⏹ Stop" } else { "▶ Play" };
+                let running = app.playing || app.rec.counting.is_some();
+                let play_label = if running { "⏹ Stop" } else { "▶ Play" };
                 let play = egui::Button::new(RichText::new(play_label).size(15.0))
-                    .fill(if app.playing { Color32::from_rgb(120, 60, 50) } else { Color32::from_rgb(50, 110, 70) })
+                    .fill(if running { Color32::from_rgb(120, 60, 50) } else { Color32::from_rgb(50, 110, 70) })
                     .min_size(egui::vec2(84.0, 28.0));
                 if ui.add(play).on_hover_text("Play / stop (Space)").clicked() {
                     app.toggle_play();
                 }
+                record_controls(app, ui);
                 if ui.button("⏮").on_hover_text("Back to start (Enter)").clicked() {
                     app.seek(0.0);
                 }
@@ -75,7 +77,7 @@ pub fn show(app: &mut OrchestreApp, ui: &mut Ui) {
 
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     let master = app.levels.get(&0).copied().unwrap_or(0.0);
-                    meter(ui, master, egui::vec2(90.0, 10.0));
+                    meter(ui, master, egui::vec2(60.0, 10.0));
                     #[cfg(not(target_arch = "wasm32"))]
                     if let Some(midi) = &app.midi {
                         ui.label(RichText::new("🎹 MIDI").color(theme::TEXT_DIM)).on_hover_text(midi.device_names.join("\n"));
@@ -124,13 +126,61 @@ fn file_menu(app: &mut OrchestreApp, ui: &mut Ui) {
     });
 }
 
+fn record_controls(app: &mut OrchestreApp, ui: &mut Ui) {
+    let target = app.selected_track().map(|t| t.name.clone());
+    let recording = app.rec.active;
+    let red = Color32::from_rgb(220, 60, 60);
+    let text =
+        RichText::new("⏺ Rec")
+            .size(15.0)
+            .color(if recording { Color32::WHITE } else { red });
+    let button = egui::Button::new(text)
+        .fill(if recording {
+            red
+        } else {
+            ui.visuals().widgets.inactive.weak_bg_fill
+        })
+        .min_size(egui::vec2(60.0, 28.0));
+    let hover = match &target {
+        Some(name) if recording => format!("Recording into “{name}” — click or press R to stop"),
+        Some(name) => format!("Record what you play on the keyboard into “{name}” (R)"),
+        None => "Select a track first, then record into it".to_string(),
+    };
+    if ui
+        .add_enabled(target.is_some() || recording, button)
+        .on_hover_text(hover)
+        .on_disabled_hover_text("Select a track first, then record into it")
+        .clicked()
+    {
+        app.toggle_record();
+    }
+    ui.menu_button("⏷", |ui| {
+        ui.label(RichText::new("Recording").strong());
+        ui.checkbox(&mut app.rec.count_in, "Count in one bar")
+            .on_hover_text("Clicks for a bar before recording starts");
+        if ui
+            .checkbox(&mut app.rec.click, "Metronome while recording")
+            .changed()
+            && app.rec.active
+        {
+            let on = app.rec.click;
+            app.send(orchestre_dsp::Cmd::SetMetronome(on));
+        }
+        ui.checkbox(&mut app.rec.snap, "Snap notes to the grid")
+            .on_hover_text("Recorded notes are moved to the nearest Snap position");
+        ui.separator();
+        ui.label(
+            RichText::new("With Loop on, each pass adds notes on top.")
+                .size(11.5)
+                .color(theme::TEXT_DIM),
+        );
+    })
+    .response
+    .on_hover_text("Recording options");
+}
+
 fn keyboard_menu(app: &mut OrchestreApp, ui: &mut Ui) -> egui::Response {
-    let text = RichText::new(format!(
-        "⌨ {} · Octave {}",
-        app.kb_layout.label(),
-        app.octave
-    ))
-    .color(theme::TEXT_DIM);
+    let text = RichText::new(format!("⌨ Oct {}", app.octave)).color(theme::TEXT_DIM);
     ui.menu_button(text, |ui| {
         ui.label(RichText::new("Keyboard layout").strong());
         let auto = !app.kb_layout_manual;

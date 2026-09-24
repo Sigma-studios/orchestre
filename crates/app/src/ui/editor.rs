@@ -24,6 +24,7 @@ pub fn show(app: &mut OrchestreApp, ui: &mut Ui) {
     crate::ui::sidebar::show(app, &mut side_ui);
 
     crate::ui::roll::show(app, ui, roll);
+    record_overlay(app, ui, roll);
     toast(app, ui, roll);
 }
 
@@ -46,6 +47,56 @@ fn welcome(app: &mut OrchestreApp, ui: &mut Ui, rect: Rect) {
         child.label(RichText::new("Space plays and stops the song").color(theme::TEXT_DIM));
     }
     toast(app, ui, rect);
+}
+
+/// Count-in number, and a "recording" badge while recording.
+fn record_overlay(app: &OrchestreApp, ui: &Ui, rect: Rect) {
+    if !app.rec.active {
+        return;
+    }
+    let p = ui.painter();
+    let red = Color32::from_rgb(220, 60, 60);
+    if let Some(beats) = app.rec.counting {
+        p.text(
+            rect.center(),
+            egui::Align2::CENTER_CENTER,
+            beats.to_string(),
+            FontId::proportional(96.0),
+            Color32::from_white_alpha(200),
+        );
+        p.text(
+            rect.center() + egui::vec2(0.0, 64.0),
+            egui::Align2::CENTER_TOP,
+            "Get ready…",
+            FontId::proportional(18.0),
+            Color32::from_white_alpha(160),
+        );
+        return;
+    }
+    // Blinks once per beat.
+    let beat = app.project.time_sig.beat_ticks() as f64;
+    let on = (app.estimated_position() / beat).fract() < 0.5;
+    let badge = Rect::from_min_size(
+        rect.right_top() + egui::vec2(-130.0, 30.0),
+        egui::vec2(118.0, 26.0),
+    );
+    p.rect_filled(
+        badge,
+        13.0,
+        Color32::from_rgba_unmultiplied(40, 20, 20, 220),
+    );
+    p.circle_filled(
+        badge.left_center() + egui::vec2(15.0, 0.0),
+        6.0,
+        if on { red } else { red.gamma_multiply(0.35) },
+    );
+    p.text(
+        badge.left_center() + egui::vec2(28.0, 0.0),
+        egui::Align2::LEFT_CENTER,
+        "RECORDING",
+        FontId::proportional(13.0),
+        Color32::WHITE,
+    );
 }
 
 fn toast(app: &OrchestreApp, ui: &Ui, rect: Rect) {

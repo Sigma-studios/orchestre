@@ -6,6 +6,7 @@ mod input;
 mod io;
 #[cfg(not(target_arch = "wasm32"))]
 mod midi;
+mod record;
 mod theme;
 mod ui;
 
