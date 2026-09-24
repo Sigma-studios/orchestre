@@ -1,0 +1,29 @@
+[workspace]
+resolver = "3"
+members = ["crates/*"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.95"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/Sigma-studios/orchestre"
+
+[workspace.dependencies]
+orchestre-core = { path = "crates/core" }
+orchestre-dsp = { path = "crates/dsp" }
+orchestre-audio = { path = "crates/audio" }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+postcard = { version = "1", features = ["alloc"] }
+
+[profile.release]
+opt-level = 3
+lto = "thin"
+
+# DSP is unusably slow unoptimized; keep deps and the engine fast in dev builds.
+[profile.dev.package."*"]
+opt-level = 2
+
+[profile.dev.package.orchestre-dsp]
+opt-level = 2

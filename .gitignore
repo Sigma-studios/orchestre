@@ -1,0 +1,4 @@
+/target
+/dist
+/web/engine.wasm
+.DS_Store

@@ -1,0 +1,21 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no" />
+  <title>Orchestre</title>
+  <link data-trunk rel="rust" href="crates/app/Cargo.toml" data-bin="orchestre" data-wasm-opt="z" />
+  <link data-trunk rel="copy-file" href="web/worklet.js" />
+  <link data-trunk rel="copy-file" href="web/engine.wasm" />
+  <style>
+    html, body { margin: 0; padding: 0; width: 100%; height: 100%; overflow: hidden; background: #16181e; }
+    #orchestre_canvas { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
+    #loading { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
+      color: #8c92a2; font: 16px system-ui, sans-serif; }
+  </style>
+</head>
+<body>
+  <canvas id="orchestre_canvas"></canvas>
+  <div id="loading"><p>Loading Orchestre…</p></div>
+</body>
+</html>

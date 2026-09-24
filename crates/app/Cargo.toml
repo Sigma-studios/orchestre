@@ -1,0 +1,29 @@
+[package]
+name = "orchestre"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+repository.workspace = true
+license.workspace = true
+
+[dependencies]
+orchestre-core.workspace = true
+orchestre-dsp.workspace = true
+orchestre-audio.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+eframe = { version = "0.36", default-features = false, features = ["accesskit", "default_fonts", "glow", "persistence", "wayland", "x11"] }
+egui = "0.36"
+hound = "3.5"
+log = "0.4"
+
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+env_logger = "0.11"
+rfd = "0.17"
+midir = "0.11"
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+wasm-bindgen = "0.2"
+wasm-bindgen-futures = "0.4"
+js-sys = "0.3"
+web-sys = { version = "0.3", features = ["Blob", "BlobPropertyBag", "Url", "Document", "Element", "HtmlElement", "HtmlAnchorElement", "HtmlInputElement", "HtmlCanvasElement", "FileList", "File", "Window"] }

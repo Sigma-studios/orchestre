@@ -1,0 +1,89 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+    paths-ignore:
+      - "**.md"
+  pull_request:
+    branches: [main]
+    paths-ignore:
+      - "**.md"
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref || github.run_id }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  RUSTFLAGS: -Dwarnings
+  RUSTDOCFLAGS: -Dwarnings
+  # Line tables keep file:line in panics at a fraction of full debug info's disk use.
+  CARGO_PROFILE_DEV_DEBUG: line-tables-only
+
+jobs:
+  native:
+    name: fmt, clippy, test, docs
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install system dependencies
+        # ALSA for cpal/midir/bevy_audio; Wayland/X11 keyboard support for eframe.
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends libasound2-dev libudev-dev libwayland-dev libxkbcommon-dev
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - name: Restore Rust cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: native
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+
+      - name: Format
+        run: cargo fmt --all --check
+
+      - name: Clippy
+        run: cargo clippy --workspace --all-targets --locked
+
+      - name: Test
+        run: cargo test --workspace --locked
+
+      - name: Docs
+        run: cargo doc --workspace --no-deps --locked
+
+  web:
+    name: wasm (app, worklet engine, bevy plugin)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+          components: clippy
+
+      - name: Restore Rust cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: web
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+
+      - name: Clippy for wasm
+        run: cargo clippy -p orchestre -p orchestre-audio -p orchestre-dsp-worklet -p orchestre-bevy --locked --target wasm32-unknown-unknown
+
+      - name: Install trunk
+        uses: cargo-bins/cargo-binstall@main
+      - run: cargo binstall --no-confirm --locked trunk
+
+      - name: Build the web app
+        # Also builds the AudioWorklet engine (Trunk pre-build hook).
+        run: trunk build --release --locked

@@ -1,0 +1,14 @@
+[package]
+name = "orchestre-bevy"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+repository.workspace = true
+license.workspace = true
+description = "Play Orchestre (.orch) songs in Bevy, synthesized live"
+
+[dependencies]
+orchestre-core.workspace = true
+orchestre-dsp.workspace = true
+bevy = { version = "0.19", default-features = false, features = ["bevy_asset", "bevy_audio"] }
+serde.workspace = true

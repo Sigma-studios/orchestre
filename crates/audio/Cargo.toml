@@ -1,0 +1,22 @@
+[package]
+name = "orchestre-audio"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+repository.workspace = true
+license.workspace = true
+
+[dependencies]
+orchestre-dsp.workspace = true
+log = "0.4"
+
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+cpal = "0.18"
+rtrb = "0.4"
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+postcard.workspace = true
+wasm-bindgen = "0.2"
+wasm-bindgen-futures = "0.4"
+js-sys = "0.3"
+web-sys = { version = "0.3", features = ["AudioContext", "AudioContextOptions", "AudioContextState", "AudioWorklet", "AudioWorkletNode", "AudioWorkletNodeOptions", "AudioNode", "AudioDestinationNode", "BaseAudioContext", "MessagePort", "MessageEvent", "Window", "Response", "WorkletOptions"] }

@@ -1,0 +1,16 @@
+[package]
+name = "orchestre-dsp-worklet"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+repository.workspace = true
+license.workspace = true
+
+# Built separately for wasm32 and loaded by web/worklet.js. Exposes a plain C
+# ABI (no wasm-bindgen) so it can be instantiated inside an AudioWorklet.
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+orchestre-dsp.workspace = true
+postcard.workspace = true

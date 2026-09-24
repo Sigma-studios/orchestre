@@ -1,0 +1,16 @@
+[build]
+target = "index.html"
+dist = "dist"
+
+# The audio engine runs in an AudioWorklet as a separate, plain wasm module.
+[[hooks]]
+stage = "pre_build"
+command = "sh"
+command_arguments = ["-c", "cargo build -p orchestre-dsp-worklet --release --target wasm32-unknown-unknown && cp target/wasm32-unknown-unknown/release/orchestre_dsp_worklet.wasm web/engine.wasm"]
+
+[watch]
+ignore = ["web/engine.wasm", "dist"]
+
+[serve]
+addresses = ["127.0.0.1"]
+port = 8080
