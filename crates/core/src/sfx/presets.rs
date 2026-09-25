@@ -2,8 +2,8 @@
 //! to tune or replace later. Each one is an ordinary [`Sound`].
 
 use super::{
-    BubbleParams, Control, ControlTarget, Curve, EngineParams, FilterMode, Generator, Layer,
-    Looping, Material, ModalParams, NoiseParams, PulseParams, Shape, Sound, ThumpParams,
+    BubbleParams, Control, ControlTarget, Curve, EngineParams, FilterMode, Generator, KlattParams,
+    Layer, Looping, Material, ModalParams, NoiseParams, PulseParams, Shape, Sound, ThumpParams,
     ToneParams, Tract, VoiceParams,
 };
 use crate::instrument::Wave;
@@ -174,9 +174,11 @@ fn voice(shape: Shape) -> VoiceParams {
         breath: 0.08,
         rasp: 0.0,
         rasp_rate: 70.0,
+        trill: 0.0,
         vibrato: 0.0,
         vibrato_rate: 5.0,
         tract: Tract::Human,
+        klatt: KlattParams::default(),
     }
 }
 
@@ -3482,6 +3484,168 @@ pub const PRESETS: &[Preset] = &[
                 }),
             );
             s.max_voices = 1;
+        },
+    },
+    Preset {
+        category: Voices,
+        name: "Grrr",
+        description: "A growl through the teeth, with a rolled r",
+        build: |s| {
+            // Klatt 1980: a velar burst (hiss through F2–F3 before the voice
+            // starts), then an r: F3 pulled down to ~1650 Hz, the tongue tip
+            // tapping shut ~28 times a second (Ladefoged & Maddieson 1996).
+            add(
+                s,
+                "Grrr",
+                0.0,
+                1.0,
+                Generator::Voice(VoiceParams {
+                    pitch: c(&[(0.0, 115.0), (0.4, 105.0), (1.0, 95.0)]),
+                    openness: flat(0.35),
+                    frontness: flat(0.45),
+                    quality: flat(0.2),
+                    loudness: c(&[(0.0, 0.8), (0.15, 1.0), (0.8, 0.9), (1.0, 0.5)]),
+                    roughness: 0.35,
+                    subharmonics: 0.4,
+                    breath: 0.1,
+                    rasp: 1.0,
+                    rasp_rate: 28.0,
+                    trill: 0.8,
+                    klatt: KlattParams {
+                        formants: [None, None, Some(flat(1650.0)), None, None],
+                        voicing: c(&[(0.0, 0.0), (0.05, 0.0), (0.1, 1.0)]),
+                        frication: c(&[(0.0, 0.9), (0.06, 0.0)]),
+                        parallel: [0.0, 0.6, 0.9, 0.3, 0.0, 0.0, 0.0],
+                        ..KlattParams::default()
+                    },
+                    ..voice(sh(0.01, 0.7, 0.2))
+                }),
+            );
+            s.max_voices = 2;
+            s.controls.push(Control::new(
+                "Pitch",
+                ControlTarget::Pitch,
+                "Hz",
+                105.0,
+                60.0,
+                250.0,
+            ));
+        },
+    },
+    Preset {
+        category: Voices,
+        name: "Shh",
+        description: "Quiet, please",
+        build: |s| {
+            // A sh is hiss through F3 and F4 with the lips rounded, and no
+            // voice at all (Klatt 1980, Table III).
+            add(
+                s,
+                "Shh",
+                0.0,
+                0.8,
+                Generator::Voice(VoiceParams {
+                    openness: flat(0.2),
+                    frontness: flat(0.6),
+                    loudness: c(&[(0.0, 0.6), (0.3, 1.0), (1.0, 0.8)]),
+                    klatt: KlattParams {
+                        voicing: flat(0.0),
+                        frication: flat(1.0),
+                        parallel: [0.0, 0.0, 1.0, 0.7, 0.3, 0.1, 0.0],
+                        ..KlattParams::default()
+                    },
+                    ..voice(sh(0.08, 0.6, 0.25))
+                }),
+            );
+            s.max_voices = 2;
+        },
+    },
+    Preset {
+        category: Voices,
+        name: "Hmm",
+        description: "Thinking it over, mouth shut",
+        build: |s| {
+            // An m: lips closed, the voice out through the nose — a low
+            // nasal resonance and a zero around 1 kHz (Klatt 1980).
+            add(
+                s,
+                "Hmm",
+                0.0,
+                1.0,
+                Generator::Voice(VoiceParams {
+                    pitch: c(&[(0.0, 125.0), (0.4, 135.0), (1.0, 110.0)]),
+                    openness: flat(0.05),
+                    frontness: flat(0.3),
+                    quality: flat(0.5),
+                    loudness: c(&[(0.0, 0.7), (0.3, 1.0), (1.0, 0.7)]),
+                    klatt: KlattParams {
+                        formants: [Some(flat(250.0)), None, None, None, None],
+                        nasal_pole: 270.0,
+                        nasal_zero: Some(flat(1100.0)),
+                        ..KlattParams::default()
+                    },
+                    ..voice(sh(0.05, 0.6, 0.25))
+                }),
+            );
+            s.max_voices = 2;
+        },
+    },
+    Preset {
+        category: Voices,
+        name: "Brrr",
+        description: "Shivering with cold",
+        build: |s| {
+            // A lip trill: rounded, nearly shut, flapping ~22 times a second.
+            add(
+                s,
+                "Brrr",
+                0.0,
+                0.9,
+                Generator::Voice(VoiceParams {
+                    pitch: c(&[(0.0, 170.0), (1.0, 150.0)]),
+                    openness: flat(0.1),
+                    frontness: flat(0.15),
+                    quality: flat(0.55),
+                    loudness: c(&[(0.0, 0.9), (0.7, 1.0), (1.0, 0.6)]),
+                    breath: 0.2,
+                    rasp: 1.0,
+                    rasp_rate: 22.0,
+                    trill: 0.9,
+                    vibrato: 0.3,
+                    vibrato_rate: 7.0,
+                    ..voice(sh(0.02, 0.8, 0.2))
+                }),
+            );
+            s.max_voices = 2;
+        },
+    },
+    Preset {
+        category: Creatures,
+        name: "Snake hiss",
+        description: "Sssss: back away",
+        build: |s| {
+            // An s: hiss through the highest formants and straight through,
+            // no voice.
+            add(
+                s,
+                "Hiss",
+                0.0,
+                0.8,
+                Generator::Voice(VoiceParams {
+                    openness: flat(0.15),
+                    frontness: flat(0.8),
+                    loudness: c(&[(0.0, 0.4), (0.4, 1.0), (0.8, 0.9), (1.0, 0.6)]),
+                    klatt: KlattParams {
+                        voicing: flat(0.0),
+                        frication: flat(1.0),
+                        parallel: [0.0, 0.0, 0.0, 0.1, 0.3, 1.0, 0.5],
+                        f6: 5500.0,
+                        ..KlattParams::default()
+                    },
+                    ..voice(sh(0.15, 0.9, 0.3))
+                }),
+            );
+            s.max_voices = 2;
         },
     },
     Preset {

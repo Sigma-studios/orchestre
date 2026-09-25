@@ -19,6 +19,12 @@ this page in step.
 | Scream flutter ("rasp") | 30–150 Hz amplitude modulation | Arnal et al. 2015, [Current Biology](https://www.cell.com/fulltext/S0960-9822(15)00737-X) |
 | Jitter/shimmer at full roughness | ±5% / ±35% (5–10× pathology thresholds) | [Praat manual](https://www.fon.hum.uva.nl/praat/manual/Voice_2__Jitter.html); Anikin 2020 |
 | Bandwidth scaling √size | — | **by ear** (direction matches Kent & Vorperian) |
+| Klatt section: AV, AH, AF, AVS, A1–A6, AB, F6, FNP/FNZ, the cascade and parallel branches, alternating signs on the parallel formants, frication at half strength while the folds are shut | defaults F6 4900 Hz, FNP 250 Hz, nasal bandwidths 100 Hz | Klatt 1980, Table I and text ([PDF](https://www.fon.hum.uva.nl/david/ma_ssp/doc/Klatt-1980-JAS000971.pdf)) |
+| Parallel bandwidths B1P–B6P | 100, 200, 350, 500, 700, 1000 Hz | separate parallel bandwidths are Klatt & Klatt 1990 (KLSYN88); these values **by ear** |
+| Parallel levels | each band scaled so level 1 is about as loud whatever its width (noise bandwidth πB/2); hiss at full strength ≈ a vowel | **by ear** |
+| Trill | rasp down to 20 Hz, closures sharpened by (1 − flutter)^(1 + 7·trill) | rate: tongue-tip trills about 25–35 Hz (Ladefoged & Maddieson 1996); closure shape **by ear** |
+| *Grrr* preset: r | F3 1650 Hz | American English r, F3 around 1600 Hz (Espy-Wilson et al. 2000) |
+| *Hmm* preset: m | F1 250 Hz, nasal zero 1100 Hz | m antiresonance 750–1250 Hz (Fujimura 1962); exact values **by ear** |
 
 ### Presets (`crates/core/src/sfx/presets.rs`)
 

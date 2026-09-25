@@ -76,6 +76,38 @@ mod tests {
     }
 
     #[test]
+    fn sounds_saved_before_klatt_load_with_it_off() {
+        // Every preset, as a file written before `trill` and `klatt` existed.
+        fn strip(v: &mut serde_json::Value) {
+            match v {
+                serde_json::Value::Object(map) => {
+                    map.remove("trill");
+                    map.remove("klatt");
+                    map.values_mut().for_each(strip);
+                }
+                serde_json::Value::Array(items) => items.iter_mut().for_each(strip),
+                _ => {}
+            }
+        }
+        let uses_klatt = |s: &crate::sfx::Sound| {
+            s.layers.iter().any(|l| match &l.generator {
+                crate::sfx::Generator::Voice(p) => {
+                    p.trill != 0.0 || p.klatt != crate::sfx::KlattParams::default()
+                }
+                _ => false,
+            })
+        };
+        for preset in PRESETS.iter().filter(|p| !uses_klatt(&p.sound())) {
+            let s = preset.sound();
+            let mut json: serde_json::Value =
+                serde_json::from_str(&sound_to_json(&s).unwrap()).unwrap();
+            strip(&mut json);
+            let old = parse_sound(&json.to_string()).unwrap();
+            assert_eq!(old, s, "{}", preset.name);
+        }
+    }
+
+    #[test]
     fn stale_next_id_is_repaired() {
         let mut s = PRESETS[0].sound();
         s.next_id = 1;

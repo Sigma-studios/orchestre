@@ -340,12 +340,88 @@ pub struct VoiceParams {
     pub rasp: f32,
     #[serde(default = "rasp_rate")]
     pub rasp_rate: f32,
+    /// Shape of the rasp: 0 = a smooth flutter … 1 = sharp closures, a
+    /// tongue or lips tapping shut (a rolled r, "brrr").
+    #[serde(default)]
+    pub trill: f32,
     /// Wobble depth in semitones, and its speed in Hz.
     pub vibrato: f32,
     pub vibrato_rate: f32,
     /// Whose throat: a person's vowels, or an animal's formant pattern.
     #[serde(default)]
     pub tract: Tract,
+    /// The rest of Klatt's synthesizer: formants set by hand, hisses,
+    /// nasality. All off unless set.
+    #[serde(default)]
+    pub klatt: KlattParams,
+}
+
+/// The parts of Klatt's (1980) cascade/parallel formant synthesizer beyond
+/// the vowel knobs, under his parameter names: formants and bandwidths set
+/// directly (an r is a low F3), the amounts of voicing, breath and hiss over
+/// time, the parallel branch that shapes a hiss into s, sh or f, the voice
+/// bar under a v or z, and the nasal pole and zero of an m or n.
+///
+/// Everything is off by default, and a voice that sets none of it sounds
+/// exactly as it did before any of it existed.
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct KlattParams {
+    /// F1–F5 in Hz. Unset, each follows mouth, tongue and throat.
+    pub formants: [Option<Curve>; 5],
+    /// B1–B5 in Hz. Unset, each follows its formant.
+    pub bandwidths: [Option<Curve>; 5],
+    /// AV: how much of the sound is the vocal folds, 0..1. 0 leaves only
+    /// breath and hiss: a whisper, or a consonant with no voice.
+    pub voicing: Curve,
+    /// AH: breath through the whole tract (h), 0..1, on top of `breath`.
+    pub aspiration: Curve,
+    /// AF: turbulence at a narrowing of the mouth, 0..1, shaped by the
+    /// parallel formants at the `parallel` levels.
+    pub frication: Curve,
+    /// A1–A6 then AB: how much of the frication each parallel formant
+    /// passes, and how much goes straight through (bypass), 0..1. High
+    /// formants and the bypass make an s; F3 and F4 a sh; the bypass
+    /// alone an f.
+    pub parallel: [f32; 7],
+    /// B1P–B6P in Hz: the parallel formants' own bandwidths (Klatt 1988),
+    /// much wider than the vowel's, since a hiss's peaks are broad.
+    pub parallel_widths: [f32; 6],
+    /// F6 in Hz, the parallel branch's highest formant: where an s hisses.
+    pub f6: f32,
+    /// AVS: a soft hum at the pitch, under a voiced hiss (v, z), 0..1.
+    pub voice_bar: Curve,
+    /// FNP in Hz: the nasal cavity's resonance.
+    pub nasal_pole: f32,
+    /// FNZ in Hz over time: its anti-resonance. Unset, the nose is shut.
+    /// Near FNP it barely changes a vowel; far above it (800–1500 Hz), with
+    /// the mouth closed, it is the murmur of an m or n.
+    pub nasal_zero: Option<Curve>,
+}
+
+impl Default for KlattParams {
+    fn default() -> Self {
+        KlattParams {
+            formants: [None; 5],
+            bandwidths: [None; 5],
+            voicing: Curve::flat(1.0),
+            aspiration: Curve::flat(0.0),
+            frication: Curve::flat(0.0),
+            parallel: [0.0, 0.0, 0.3, 0.5, 0.6, 0.6, 0.3],
+            parallel_widths: [100.0, 200.0, 350.0, 500.0, 700.0, 1000.0],
+            f6: 4900.0,
+            voice_bar: Curve::flat(0.0),
+            nasal_pole: 250.0,
+            nasal_zero: None,
+        }
+    }
+}
+
+impl KlattParams {
+    /// Whether any hiss reaches the parallel branch.
+    pub fn frication_on(&self) -> bool {
+        self.frication.max() > 0.0
+    }
 }
 
 /// Water, as clouds of bubbles (van den Doel 2005): each bubble rings at
@@ -570,9 +646,11 @@ impl GeneratorKind {
                 breath: 0.1,
                 rasp: 0.0,
                 rasp_rate: 70.0,
+                trill: 0.0,
                 vibrato: 0.0,
                 vibrato_rate: 5.0,
                 tract: Tract::Human,
+                klatt: KlattParams::default(),
             }),
             GeneratorKind::Pulses => Generator::Pulses(PulseParams {
                 shape: Shape::new(0.01, 0.5, 0.2),

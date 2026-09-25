@@ -20,6 +20,10 @@ pub const MAX_SOUNDS: usize = 16;
 const MAX_REPEATS: usize = 8;
 /// Fade used when a sound is cut short, and at the very end of each layer.
 const FADE: f32 = 0.005;
+/// Seconds an edited version of a playing sound fades in over while the old
+/// one fades out (see [`SfxVoice::swapped`]): long enough to hide the jump in
+/// every oscillator's phase, short enough to sound instant.
+pub const XFADE: f32 = 0.02;
 /// Filters are retuned every this many samples while sweeping.
 const RETUNE: u32 = 16;
 /// Voices render in chunks of this many samples; live changes (intensity,
@@ -500,6 +504,50 @@ impl Resonator {
     }
 }
 
+/// Klatt's anti-resonator: the inverse of a [`Resonator`], a notch where
+/// that one has a peak. The nasal zero.
+#[derive(Clone, Copy, Default)]
+struct AntiResonator {
+    a: f32,
+    b: f32,
+    c: f32,
+    x1: f32,
+    x2: f32,
+    on: bool,
+}
+
+impl AntiResonator {
+    fn set(&mut self, f: f32, bw: f32, sr: f32) {
+        let mut r = Resonator::default();
+        r.set(f, bw, sr);
+        self.on = r.on;
+        if !self.on {
+            return;
+        }
+        // y = (x - b x1 - c x2) / a: the resonator's equation, solved for x.
+        self.a = 1.0 / r.a;
+        self.b = -r.b / r.a;
+        self.c = -r.c / r.a;
+    }
+
+    #[inline]
+    fn process(&mut self, x: f32) -> f32 {
+        if !self.on {
+            return x;
+        }
+        let y = self.a * x + self.b * self.x1 + self.c * self.x2;
+        self.x2 = self.x1;
+        self.x1 = x;
+        y
+    }
+}
+
+/// Bandwidths of the nasal pole and zero (Klatt 1980, Table I).
+const NASAL_WIDTH: f32 = 100.0;
+/// Level of the parallel branch at full frication, against a voice's 0.25:
+/// a hiss about as loud as a vowel. By ear.
+const FRICATION_LEVEL: f32 = 0.35;
+
 /// The two highest formants barely move between vowels.
 /// (Klatt 1980's typical F4 and F5.)
 const HIGH_FORMANTS: [f32; 2] = [3300.0, 3750.0];
@@ -568,6 +616,11 @@ struct VoiceVoice {
     /// The second, independent pitch of a split voice.
     folds2: Folds,
     formants: [Resonator; 5],
+    /// Klatt's nasal pole and zero, ahead of the formants, when set.
+    nasal: Option<(Resonator, AntiResonator)>,
+    /// The parallel branch, when there is frication: F1–F6, each with the
+    /// gain that makes a level of 1 about as loud whatever its width.
+    parallel: Option<[(Resonator, f32); 6]>,
     rng: Rng,
     /// Slow pitch wander that makes long notes less static.
     wander: Drift,
@@ -597,7 +650,26 @@ fn formants(p: &VoiceParams, u: f32) -> ([f32; 5], [f32; 5]) {
     };
     let widths = freqs.map(formant_bandwidth);
     // A bigger throat: lower and narrower resonances.
-    (freqs.map(|f| f / size), widths.map(|w| w / size.sqrt()))
+    let mut freqs = freqs.map(|f| f / size);
+    let mut widths = widths.map(|w| w / size.sqrt());
+    // Set by hand, in Hz as heard: the throat's size is already in them.
+    let k = &p.klatt;
+    for i in 0..5 {
+        if let Some(f) = k.formants[i] {
+            freqs[i] = f.at_log(u).clamp(50.0, 20_000.0);
+            widths[i] = formant_bandwidth(freqs[i]) / size.sqrt();
+        }
+        if let Some(w) = k.bandwidths[i] {
+            widths[i] = w.at_log(u).clamp(10.0, 5000.0);
+        }
+    }
+    (freqs, widths)
+}
+
+/// F1–F5 and their bandwidths, in Hz, at a point `u` (0..1) of a voice: what
+/// the editor starts a formant from when it is first set by hand.
+pub fn voice_formants(p: &VoiceParams, u: f32) -> ([f32; 5], [f32; 5]) {
+    formants(p, u)
 }
 
 /// RMS of a voice at a few points of its length, from the source's
@@ -633,6 +705,14 @@ impl VoiceVoice {
             folds: Folds::new(),
             folds2: Folds::new(),
             formants: [Resonator::default(); 5],
+            nasal: p
+                .klatt
+                .nasal_zero
+                .map(|_| (Resonator::default(), AntiResonator::default())),
+            parallel: p
+                .klatt
+                .frication_on()
+                .then_some([(Resonator::default(), 1.0); 6]),
             rng: Rng::new(seed),
             wander: Drift::new(4.0, sr),
             n: 0,
@@ -650,6 +730,27 @@ impl VoiceVoice {
             let (freqs, widths) = formants(p, u);
             for ((r, f), w) in self.formants.iter_mut().zip(freqs).zip(widths) {
                 r.set(f, w, self.sr);
+            }
+            if let (Some((pole, zero)), Some(fz)) = (&mut self.nasal, p.klatt.nasal_zero) {
+                pole.set(
+                    p.klatt.nasal_pole.clamp(100.0, 2000.0),
+                    NASAL_WIDTH,
+                    self.sr,
+                );
+                zero.set(fz.at_log(u).clamp(100.0, 4000.0), NASAL_WIDTH, self.sr);
+            }
+            if let Some(parallel) = &mut self.parallel {
+                let f6 = p.klatt.f6.clamp(2000.0, 12_000.0);
+                let bands = freqs.into_iter().chain([f6]).zip(p.klatt.parallel_widths);
+                for ((r, gain), (f, w)) in parallel.iter_mut().zip(bands) {
+                    let w = w.clamp(20.0, 5000.0);
+                    r.set(f, w, self.sr);
+                    // Peak to 1, then up by how little of a white hiss a band
+                    // this wide lets through (its noise bandwidth is πw/2 of
+                    // the sr/2 there is).
+                    let share = (std::f32::consts::PI * w / self.sr).min(1.0);
+                    *gain = 1.0 / (r.gain(f, self.sr).max(1e-6) * share.sqrt());
+                }
             }
         }
         self.n += 1;
@@ -681,19 +782,64 @@ impl VoiceVoice {
             let f = f0 * p.split_ratio.max(0.1);
             src += p.split.min(1.0) * 0.7 * self.folds2.next(sr, |odd| vibration(odd, f));
         }
-        // Breath: louder while the folds are open, and in lax voices.
+        let k = &p.klatt;
+        // AV. The default is a flat 1, and multiplying by it changes nothing.
+        let voicing = k.voicing.at(u).clamp(0.0, 1.0);
+        src *= voicing;
+        // AVS: the voice bar, a sine at the folds' rate, under a v or a z.
+        let bar = k.voice_bar.at(u).clamp(0.0, 1.0);
+        if bar > 0.0 {
+            src += bar * 0.5 * (TAU * self.folds.phase).sin();
+        }
+        // Breath: louder while the folds are open, and in lax voices. AH on
+        // top, for an h.
         let open = self.folds.phase < crate::glottis::tables().open_phase(quality);
-        let breath = (p.breath + (quality - 0.6).max(0.0) * 0.6).min(1.0);
+        let breath =
+            (p.breath + k.aspiration.at(u).max(0.0) + (quality - 0.6).max(0.0) * 0.6).min(1.0);
         let aspiration = self.rng.noise() * breath * if open { 1.0 } else { 0.4 };
         let mut y = src * (1.0 - breath * 0.5) + aspiration * 0.15;
+        if let Some((pole, zero)) = &mut self.nasal {
+            y = zero.process(pole.process(y));
+        }
         for r in &mut self.formants {
             y = r.process(y);
         }
-        if p.rasp > 0.0 {
+        let rasp = (p.rasp > 0.0).then(|| {
             let d = p.rasp.min(1.0);
-            y *= 1.0 - d + d * (0.5 + 0.5 * (TAU * p.rasp_rate * t).sin());
+            let wave = 0.5 + 0.5 * (TAU * p.rasp_rate * t).sin();
+            if p.trill > 0.0 {
+                // A trill: open most of the time, snapping shut at the
+                // bottom of each cycle. The higher the power, the shorter
+                // and sharper the closure.
+                1.0 - d * (1.0 - wave).powf(1.0 + 7.0 * p.trill.min(1.0))
+            } else {
+                1.0 - d + d * wave
+            }
+        });
+        if let Some(rasp) = rasp {
+            y *= rasp;
         }
-        y * self.norm * env * p.loudness.at(u).max(0.0)
+        let mut out = y * self.norm;
+
+        // The parallel branch: turbulence at a narrowing, through each
+        // formant at its own level (signs alternating, as Klatt does, so
+        // neighbouring peaks don't cancel), and straight through.
+        if let Some(parallel) = &mut self.parallel {
+            let af = k.frication.at(u).clamp(0.0, 1.0);
+            // Voiced hiss comes in puffs, half as strong while the folds are
+            // shut (Klatt 1980).
+            let puffs = if open { 1.0 } else { 1.0 - 0.5 * voicing };
+            let noise = self.rng.noise() * af * puffs;
+            let mut hiss = 0.0;
+            for (i, (r, peak)) in parallel.iter_mut().enumerate() {
+                let level = k.parallel[i].clamp(0.0, 1.0) * *peak;
+                let sign = if i % 2 == 0 { 1.0 } else { -1.0 };
+                hiss += sign * level * r.process(noise);
+            }
+            hiss += k.parallel[6].clamp(0.0, 1.0) * noise;
+            out += hiss * FRICATION_LEVEL * rasp.unwrap_or(1.0);
+        }
+        out * env * p.loudness.at(u).max(0.0)
     }
 }
 
@@ -1323,6 +1469,9 @@ struct Live {
 struct Pass {
     layers: Vec<LayerVoice>,
     t: f32,
+    /// What it was started with, so an edited version of it can be started
+    /// the same way.
+    opts: PlayOpts,
 }
 
 impl Pass {
@@ -1371,7 +1520,11 @@ impl Pass {
                 follow: l.follow,
             });
         }
-        Pass { layers, t: 0.0 }
+        Pass {
+            layers,
+            t: 0.0,
+            opts: *opts,
+        }
     }
 
     fn end(&self) -> f32 {
@@ -1465,6 +1618,8 @@ pub struct SfxVoice {
     /// Remaining gain of a sound being cut short.
     fade: Option<f32>,
     fade_step: f32,
+    /// Gain of a sound fading in, taking over from an older version of itself.
+    fade_in: Option<f32>,
 }
 
 impl SfxVoice {
@@ -1495,7 +1650,54 @@ impl SfxVoice {
             space: sound.space.clamp(0.0, 1.0),
             fade: None,
             fade_step: 1.0 / (FADE * sr),
+            fade_in: None,
         }
+    }
+
+    /// Whether an edited version of the sound can take over from this play:
+    /// a loop that is still holding or repeating.
+    pub fn swappable(&self) -> bool {
+        self.looping != Looping::Once && !self.released && self.fade.is_none()
+    }
+
+    /// This play, as an edited version of the sound would have it at the
+    /// same moment: the same variation, the same time into every pass. The
+    /// new one fades in over [`XFADE`]; [`Self::cross_fade_out`] this one.
+    ///
+    /// Layers that ring or bubble on from their own past (resonances,
+    /// bubbles, engines) start that afresh; everything else is a function of
+    /// time and carries on where it was.
+    pub fn swapped(&self, sound: &Sound) -> SfxVoice {
+        let mut v = SfxVoice::new(sound, &self.opts, self.sr);
+        v.passes = self
+            .passes
+            .iter()
+            .map(|p| {
+                let mut pass = Pass::new(sound, &p.opts, self.sr);
+                pass.t = p.t;
+                pass
+            })
+            .collect();
+        v.t = self.t;
+        v.count = self.count;
+        v.intensity = self.intensity;
+        v.target = self.target;
+        v.pitch = self.pitch;
+        v.rate = self.rate;
+        // A new repeat interval counts from now, not from the start.
+        v.next_pass = match sound.looping {
+            Looping::Repeat { every } => self.next_pass.min(self.t + every.max(0.02) / self.rate),
+            _ => f32::INFINITY,
+        };
+        v.fade_in = Some(0.0);
+        v.fade_step = 1.0 / (XFADE * self.sr);
+        v
+    }
+
+    /// Fade out over [`XFADE`], as a newer version of the sound fades in.
+    pub fn cross_fade_out(&mut self) {
+        self.fade_step = 1.0 / (XFADE * self.sr);
+        self.stop();
     }
 
     /// Seconds from the start until the last layer is silent (infinite for
@@ -1583,6 +1785,10 @@ impl SfxVoice {
                 if let Some(fade) = &mut self.fade {
                     *fade = (*fade - self.fade_step).max(0.0);
                     g *= *fade;
+                }
+                if let Some(rise) = &mut self.fade_in {
+                    *rise = (*rise + self.fade_step).min(1.0);
+                    g *= *rise;
                 }
                 let (a, b) = (bl[i] * g, br[i] * g);
                 l[done + i] += a;
@@ -1785,8 +1991,8 @@ pub fn layer_envelope(sound: &Sound, layer: &Layer, seconds: f32, bins: usize) -
 #[cfg(test)]
 mod tests {
     use super::*;
-    use orchestre_core::sfx::GeneratorKind;
     use orchestre_core::sfx::presets::{PRESETS, find};
+    use orchestre_core::sfx::{Curve, GeneratorKind};
 
     const SR: u32 = 44100;
 
@@ -1816,6 +2022,139 @@ mod tests {
             let expected = s.loop_preview().unwrap_or(0.0) + s.length() * 1.5;
             assert!(secs <= expected + MAX_TAIL + 0.1, "{} runs {secs}s", p.name);
         }
+    }
+
+    /// One steady voice layer, the same on every play.
+    fn klatt_voice(tweak: impl FnOnce(&mut VoiceParams)) -> Vec<f32> {
+        let Generator::Voice(mut p) = GeneratorKind::Voice.default_generator() else {
+            unreachable!()
+        };
+        p.shape = Shape::new(0.01, 0.6, 0.05);
+        p.pitch = Curve::flat(100.0);
+        p.openness = Curve::flat(0.4);
+        p.frontness = Curve::flat(0.4);
+        p.loudness = Curve::flat(1.0);
+        p.roughness = 0.0;
+        p.breath = 0.0;
+        tweak(&mut p);
+        let mut s = Sound::default();
+        s.add_layer("voice", Generator::Voice(p));
+        s.variation = 0.0;
+        let out = render_sound(&s, &PlayOpts::seeded(1), SR);
+        assert!(out.iter().all(|x| x.is_finite()), "non-finite");
+        assert!(peak(&out) <= 1.0, "clips: {}", peak(&out));
+        // The left channel, past the attack, before the release.
+        out.chunks(2)
+            .map(|f| f[0])
+            .skip(SR as usize / 10)
+            .take(SR as usize / 2)
+            .collect()
+    }
+
+    /// Power at `f` Hz (Goertzel).
+    fn power_at(x: &[f32], f: f32) -> f32 {
+        let w = TAU * f / SR as f32;
+        let (mut s1, mut s2) = (0.0f32, 0.0f32);
+        for &v in x {
+            let s0 = v + 2.0 * w.cos() * s1 - s2;
+            s2 = s1;
+            s1 = s0;
+        }
+        (s1 * s1 + s2 * s2 - 2.0 * w.cos() * s1 * s2) / x.len() as f32
+    }
+
+    /// Energy-weighted mean frequency, from a coarse scan.
+    fn centroid(x: &[f32]) -> f32 {
+        let bands: Vec<f32> = (1..40).map(|k| k as f32 * 250.0).collect();
+        let powers: Vec<f32> = bands.iter().map(|&f| power_at(x, f)).collect();
+        bands.iter().zip(&powers).map(|(f, p)| f * p).sum::<f32>() / powers.iter().sum::<f32>()
+    }
+
+    #[test]
+    fn an_f3_set_by_hand_is_where_the_sound_peaks() {
+        // An r is a vowel with its third formant pulled down to ~1600 Hz.
+        let uh = klatt_voice(|_| {});
+        let r = klatt_voice(|p| p.klatt.formants[2] = Some(Curve::flat(1600.0)));
+        let tilt = |x: &[f32]| power_at(x, 1600.0) / power_at(x, 2500.0);
+        assert!(tilt(&r) > 4.0 * tilt(&uh), "{} vs {}", tilt(&r), tilt(&uh));
+    }
+
+    #[test]
+    fn frication_alone_hisses_and_the_parallel_levels_shape_it() {
+        let hiss = |levels: [f32; 7]| {
+            klatt_voice(|p| {
+                p.klatt.voicing = Curve::flat(0.0);
+                p.klatt.frication = Curve::flat(1.0);
+                p.klatt.parallel = levels;
+            })
+        };
+        // s: F6 and the bypass. sh: F3 and F4, lower.
+        let s = hiss([0.0, 0.0, 0.0, 0.1, 0.3, 1.0, 0.5]);
+        let sh = hiss([0.0, 0.0, 1.0, 0.7, 0.2, 0.0, 0.0]);
+        for (name, x) in [("s", &s), ("sh", &sh)] {
+            assert!(rms(x) > 0.02, "{name} is too quiet: {}", rms(x));
+            // No voice: nothing at the pitch.
+            assert!(power_at(x, 100.0) < power_at(x, 3000.0), "{name} hums");
+        }
+        assert!(
+            centroid(&s) > centroid(&sh) + 800.0,
+            "s at {} Hz, sh at {} Hz",
+            centroid(&s),
+            centroid(&sh)
+        );
+    }
+
+    #[test]
+    fn a_whisper_is_breath_without_voice() {
+        let whisper = klatt_voice(|p| {
+            p.klatt.voicing = Curve::flat(0.0);
+            p.klatt.aspiration = Curve::flat(1.0);
+        });
+        assert!(rms(&whisper) > 0.005, "{}", rms(&whisper));
+        let voiced = klatt_voice(|_| {});
+        // The pitch's harmonics stand out of a voice, not out of breath.
+        let harmonic = |x: &[f32]| power_at(x, 300.0) / power_at(x, 350.0);
+        assert!(harmonic(&voiced) > 10.0 * harmonic(&whisper));
+    }
+
+    #[test]
+    fn the_nasal_zero_cuts_a_notch() {
+        let open = klatt_voice(|p| p.openness = Curve::flat(0.1));
+        let hum = klatt_voice(|p| {
+            p.openness = Curve::flat(0.1);
+            p.klatt.nasal_zero = Some(Curve::flat(1000.0));
+        });
+        // Harmonics of 100 Hz, relative to the fundamental.
+        let at_zero = |x: &[f32]| power_at(x, 1000.0) / power_at(x, 200.0);
+        assert!(
+            at_zero(&hum) < 0.2 * at_zero(&open),
+            "{} vs {}",
+            at_zero(&hum),
+            at_zero(&open)
+        );
+    }
+
+    #[test]
+    fn a_trill_shuts_briefly_where_a_flutter_dips_long() {
+        let rasp = |trill: f32| {
+            klatt_voice(|p| {
+                p.rasp = 1.0;
+                p.rasp_rate = 25.0;
+                p.trill = trill;
+            })
+        };
+        // Share of the time the level is nearly shut, from a 2 ms envelope.
+        let shut = |x: &[f32]| {
+            let env: Vec<f32> = x
+                .chunks(88)
+                .map(|c| c.iter().fold(0.0f32, |m, v| m.max(v.abs())))
+                .collect();
+            let top = env.iter().fold(0.0f32, |m, v| m.max(*v));
+            env.iter().filter(|v| **v < 0.1 * top).count() as f32 / env.len() as f32
+        };
+        let (flutter, trill) = (shut(&rasp(0.0)), shut(&rasp(1.0)));
+        assert!(trill > 0.02, "a trill still closes: {trill}");
+        assert!(trill < 0.6 * flutter, "and briefly: {trill} vs {flutter}");
     }
 
     #[test]

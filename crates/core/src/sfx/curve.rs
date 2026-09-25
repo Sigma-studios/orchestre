@@ -88,6 +88,12 @@ impl Curve {
         self.len -= 1;
     }
 
+    /// The highest point: with straight lines between points, nothing in
+    /// between goes above it.
+    pub fn max(&self) -> f32 {
+        self.points().iter().map(|p| p[1]).fold(f32::MIN, f32::max)
+    }
+
     /// The value at time `t` (0..1).
     pub fn at(&self, t: f32) -> f32 {
         self.interpolate(t, |a, b, f| a + (b - a) * f)

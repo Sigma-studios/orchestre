@@ -4,9 +4,9 @@
 use egui::{Align2, FontId, Rect, RichText, Sense, Slider, Ui, pos2, vec2};
 use orchestre_core::Wave;
 use orchestre_core::sfx::{
-    BubbleParams, EngineParams, FilterMode, Generator, GeneratorKind, Jitter, Layer, Looping,
-    MAX_HITS, Material, ModalParams, NoiseParams, PulseParams, Shape, ThumpParams, ToneParams,
-    VoiceParams, vowel_label,
+    BubbleParams, Curve, EngineParams, FilterMode, Generator, GeneratorKind, Jitter, Layer,
+    Looping, MAX_HITS, Material, ModalParams, NoiseParams, PulseParams, Shape, ThumpParams,
+    ToneParams, VoiceParams, vowel_label,
 };
 
 use super::layers::{draw_grid, draw_playheads, draw_wave, navigate};
@@ -686,6 +686,10 @@ fn voice_knobs(ui: &mut Ui, other: &mut Ui, p: &mut VoiceParams) {
                 .color(theme::TEXT_DIM),
         );
     });
+    ui.add_space(4.0);
+    section(ui, "Klatt: formants, hiss, nose", false, |ui| {
+        klatt_knobs(ui, p, len)
+    });
 
     heading(other, "Voice over time");
     let quality = |v: f32| {
@@ -746,14 +750,19 @@ fn voice_knobs(ui: &mut Ui, other: &mut Ui, p: &mut VoiceParams) {
                 .text("Second pitch ×"),
         );
     });
-    amount(other, &mut p.rasp, 1.0, "Rasp")
-        .on_hover_text("Fast flutter (30–150 Hz) that makes screams and alarms sound urgent");
+    amount(other, &mut p.rasp, 1.0, "Rasp").on_hover_text(
+        "Fast flutter that makes screams and alarms sound urgent (30–150 Hz), \
+         or at 20–35 Hz with Trill, a rolled r or a lip trill",
+    );
     other.add_enabled_ui(p.rasp > 0.0, |ui| {
         ui.add(
-            Slider::new(&mut p.rasp_rate, 30.0..=150.0)
+            Slider::new(&mut p.rasp_rate, 20.0..=150.0)
                 .max_decimals(0)
                 .suffix(" Hz")
                 .text("Rasp rate"),
+        );
+        amount(ui, &mut p.trill, 1.0, "Trill").on_hover_text(
+            "Smooth flutter ← → sharp closures: a tongue or lips tapping shut (grrr, brrr)",
         );
     });
     amount(other, &mut p.breath, 1.0, "Breath")
@@ -768,6 +777,151 @@ fn voice_knobs(ui: &mut Ui, other: &mut Ui, p: &mut VoiceParams) {
     );
     other.add_space(4.0);
     shape_knobs(other, &mut p.shape);
+}
+
+/// The rest of Klatt's (1980) synthesizer, for sounds that are not vowels:
+/// an r (F3 down), a hiss (s, sh, f), a hum (m, n), a whisper.
+fn klatt_knobs(ui: &mut Ui, p: &mut VoiceParams, len: f32) {
+    hint(
+        ui,
+        "For what a vowel can't do. An r is a low F3 (about 1600 Hz); s, sh and f are \
+         frication through the parallel formants; m and n are the nose.",
+    );
+    let hz_fmt = |v: f32| format!("{v:.0} Hz");
+    let pct = |v: f32| format!("{:.0}%", v * 100.0);
+    let (freqs, widths) = orchestre_dsp::sfx::voice_formants(p, 0.5);
+
+    heading(ui, "Formants by hand");
+    for i in 0..5 {
+        let mut set = p.klatt.formants[i].is_some();
+        let label = format!("F{} ({:.0} Hz from the vowel)", i + 1, freqs[i]);
+        if ui.checkbox(&mut set, label).changed() {
+            p.klatt.formants[i] = set.then(|| Curve::flat(freqs[i].round()));
+        }
+        if let Some(curve) = &mut p.klatt.formants[i] {
+            super::curve::edit(
+                ui,
+                curve,
+                &super::curve::Spec {
+                    label: &format!("F{}", i + 1),
+                    lo: 50.0,
+                    hi: 8000.0,
+                    log: true,
+                    len,
+                    format: &hz_fmt,
+                },
+            );
+        }
+        let mut wide = p.klatt.bandwidths[i].is_some();
+        let label = format!("B{} ({:.0} Hz from F{})", i + 1, widths[i], i + 1);
+        if ui.checkbox(&mut wide, label).changed() {
+            p.klatt.bandwidths[i] = wide.then(|| Curve::flat(widths[i].round()));
+        }
+        if let Some(curve) = &mut p.klatt.bandwidths[i] {
+            super::curve::edit(
+                ui,
+                curve,
+                &super::curve::Spec {
+                    label: &format!("B{}: sharp ↓ … broad ↑", i + 1),
+                    lo: 10.0,
+                    hi: 2000.0,
+                    log: true,
+                    len,
+                    format: &hz_fmt,
+                },
+            );
+        }
+    }
+
+    heading(ui, "Voice, breath and hiss over time");
+    let amounts: [(&mut Curve, &str, &str); 4] = [
+        (
+            &mut p.klatt.voicing,
+            "Voicing (AV)",
+            "How much is the vocal folds. 0 leaves breath and hiss: a whisper, an s",
+        ),
+        (
+            &mut p.klatt.aspiration,
+            "Aspiration (AH)",
+            "Breath through the whole throat: an h, on top of Breath",
+        ),
+        (
+            &mut p.klatt.frication,
+            "Frication (AF)",
+            "Hiss at a narrowing of the mouth, shaped by the parallel formants below",
+        ),
+        (
+            &mut p.klatt.voice_bar,
+            "Voice bar (AVS)",
+            "A soft hum at the pitch, under a voiced hiss: v, z",
+        ),
+    ];
+    for (curve, label, tip) in amounts {
+        hint(ui, tip);
+        super::curve::edit(
+            ui,
+            curve,
+            &super::curve::Spec {
+                label,
+                lo: 0.0,
+                hi: 1.0,
+                log: false,
+                len,
+                format: &pct,
+            },
+        );
+    }
+
+    heading(ui, "Parallel formants (the hiss)");
+    let on = p.klatt.frication_on();
+    if !on {
+        hint(ui, "Raise Frication to hear these.");
+    }
+    ui.add_enabled_ui(on, |ui| {
+        let names = ["A1", "A2", "A3", "A4", "A5", "A6", "AB (bypass)"];
+        for (v, name) in p.klatt.parallel.iter_mut().zip(names) {
+            amount(ui, v, 1.0, name);
+        }
+        hint(ui, "s: A6 and AB · sh: A3 and A4 · f: AB alone");
+        hz(ui, &mut p.klatt.f6, 2000.0, 12000.0, "F6");
+        for (i, w) in p.klatt.parallel_widths.iter_mut().enumerate() {
+            hz(ui, w, 20.0, 5000.0, &format!("B{}P", i + 1));
+        }
+    });
+
+    heading(ui, "Nose");
+    let mut nasal = p.klatt.nasal_zero.is_some();
+    if ui
+        .checkbox(&mut nasal, "Nasal (FNP, FNZ)")
+        .on_hover_text("The nose open: an m or n with the mouth shut, a nasal vowel with it open")
+        .changed()
+    {
+        p.klatt.nasal_zero = nasal.then(|| Curve::flat(1000.0));
+    }
+    if let Some(zero) = &mut p.klatt.nasal_zero {
+        hz(
+            ui,
+            &mut p.klatt.nasal_pole,
+            100.0,
+            2000.0,
+            "Nasal pole (FNP)",
+        );
+        super::curve::edit(
+            ui,
+            zero,
+            &super::curve::Spec {
+                label: "Nasal zero (FNZ)",
+                lo: 100.0,
+                hi: 4000.0,
+                log: true,
+                len,
+                format: &hz_fmt,
+            },
+        );
+    }
+    if ui.button("Reset Klatt").clicked() {
+        p.klatt = orchestre_core::sfx::KlattParams::default();
+    }
 }
 
 fn pulse_knobs(ui: &mut Ui, other: &mut Ui, p: &mut PulseParams) {
