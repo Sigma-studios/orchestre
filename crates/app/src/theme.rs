@@ -41,6 +41,9 @@ pub fn apply(ctx: &egui::Context) {
         style.spacing.item_spacing = egui::vec2(8.0, 6.0);
         style.spacing.button_padding = egui::vec2(8.0, 4.0);
         style.spacing.slider_width = 130.0;
+        // Dropdowns size themselves from this, number fields and buttons
+        // from their text and padding: match them so rows line up.
+        style.spacing.interact_size.y = 23.0;
         style.interaction.tooltip_delay = 0.4;
     });
 }
