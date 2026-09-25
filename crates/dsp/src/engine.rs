@@ -9,6 +9,7 @@ use crate::mallets::MalletEngine;
 use crate::organ::OrganEngine;
 use crate::piano::PianoEngine;
 use crate::pluck::PluckEngine;
+use crate::sfx::{MAX_SOUNDS, SfxVoice};
 use crate::song::{Cmd, Event, Song, TrackParams};
 use crate::synth::SynthEngine;
 use crate::util::{pan_gains, soft_clip};
@@ -129,6 +130,8 @@ pub struct Engine {
     count_in: Option<CountIn>,
     click: Click,
     preview: Option<Preview>,
+    /// Sound effects playing, oldest first.
+    sounds: Vec<SfxVoice>,
 }
 
 /// Clicks counted before playback starts, in ticks.
@@ -140,6 +143,8 @@ struct CountIn {
 
 impl Engine {
     pub fn new(sample_rate: f32) -> Engine {
+        // Voice tables take a few milliseconds: build them now, not mid-sound.
+        crate::glottis::tables();
         Engine {
             sr: sample_rate,
             song: Box::default(),
@@ -158,6 +163,7 @@ impl Engine {
             count_in: None,
             click: Click::new(sample_rate),
             preview: None,
+            sounds: Vec::with_capacity(MAX_SOUNDS),
         }
     }
 
@@ -233,6 +239,16 @@ impl Engine {
                     self.handle(Cmd::Play);
                 }
             }
+            Cmd::PlaySound { sound, opts } => {
+                if self.sounds.len() >= MAX_SOUNDS {
+                    self.sounds.remove(0);
+                }
+                let voice = SfxVoice::new(&sound, &opts, self.sr);
+                self.sounds.push(voice);
+            }
+            Cmd::StopSounds => self.sounds.iter_mut().for_each(SfxVoice::stop),
+            Cmd::ReleaseSounds => self.sounds.iter_mut().for_each(SfxVoice::release),
+            Cmd::SoundLive(o) => self.sounds.iter_mut().for_each(|s| s.set_live(&o)),
             Cmd::LiveNoteOff { track, pitch } => {
                 if let Some(t) = self.tracks.iter_mut().find(|t| t.id == track) {
                     t.inst.live_off(pitch);
@@ -532,6 +548,10 @@ impl Engine {
         }
 
         self.render_preview(&mut out_l[..n], &mut out_r[..n], &mut rev[..n]);
+        for s in &mut self.sounds {
+            s.render(&mut out_l[..n], &mut out_r[..n], &mut rev[..n]);
+        }
+        self.sounds.retain(|s| !s.is_done());
 
         for i in 0..n {
             let (dl, dr) = self.delay.process(del_l[i], del_r[i]);

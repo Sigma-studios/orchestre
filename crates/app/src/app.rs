@@ -9,6 +9,12 @@ use crate::history::History;
 use crate::io::Inbox;
 
 const STORAGE_KEY: &str = "orchestre_project";
+const SOUND_KEY: &str = "orchestre_sound";
+/// The sound as last opened or saved, to know what is unsaved after a restart.
+const SOUND_SAVED_KEY: &str = "orchestre_sound_saved";
+const SOUND_PATH_KEY: &str = "orchestre_sound_path";
+const SOUND_DIR_KEY: &str = "orchestre_sound_dir";
+const MODE_KEY: &str = "orchestre_mode";
 
 /// Horizontal view shared by the note editor and the track lanes.
 pub struct View {
@@ -127,6 +133,8 @@ pub struct OrchestreApp {
     pub(crate) position_time: f64,
     pub rec: crate::record::Recorder,
     pub preview: crate::ui::preview::PreviewState,
+    pub mode: crate::sfx::Mode,
+    pub sfx: crate::sfx::SfxEditor,
 }
 
 impl OrchestreApp {
@@ -146,6 +154,9 @@ impl OrchestreApp {
         let mut app = Self::build(project, Audio::new());
         app.selected = selected;
         app.settings = crate::settings::Settings::load(cc.storage);
+        if let Some(storage) = cc.storage {
+            restore_sounds(&mut app, storage);
+        }
         #[cfg(not(target_arch = "wasm32"))]
         {
             app.midi = crate::midi::Midi::connect(cc.egui_ctx.clone());
@@ -200,6 +211,11 @@ impl OrchestreApp {
             position_time: 0.0,
             rec: Default::default(),
             preview: Default::default(),
+            mode: Default::default(),
+            sfx: crate::sfx::SfxEditor::new(
+                orchestre_core::sfx::presets::find("Explosion")
+                    .map_or_else(Default::default, |p| p.sound()),
+            ),
         }
     }
 
@@ -465,6 +481,7 @@ impl OrchestreApp {
         }
 
         let animating = self.playing
+            || self.sounds_animating()
             || self.rec.counting.is_some()
             || self.preview.pending()
             || !self.auditions.is_empty()
@@ -534,6 +551,8 @@ impl OrchestreApp {
         // A whole recording take is one undo step.
         let pointer_down = ctx.input(|i| i.pointer.any_down());
         self.commit_if_idle(pointer_down);
+        self.sounds_end_frame(pointer_down);
+        self.sync_sound_file(pointer_down || ctx.egui_wants_keyboard_input());
     }
 
     pub(crate) fn commit_if_idle(&mut self, pointer_down: bool) {
@@ -548,14 +567,27 @@ impl OrchestreApp {
 impl eframe::App for OrchestreApp {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         let ctx = ui.ctx().clone();
+        // Sounds with unsaved changes: ask before quitting.
+        if ctx.input(|i| i.viewport().close_requested())
+            && !self.sfx.quit_confirmed
+            && !self.sfx.unsaved_names().is_empty()
+        {
+            ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
+            self.sfx.quitting = true;
+        }
         self.tick(&ctx);
         crate::input::handle(self, &ctx);
 
-        crate::ui::transport::show(self, ui);
-        crate::ui::lanes::show(self, ui);
-        egui::CentralPanel::default()
-            .frame(egui::Frame::central_panel(ui.style()).inner_margin(0.0))
-            .show(ui, |ui| crate::ui::editor::show(self, ui));
+        match self.mode {
+            crate::sfx::Mode::Music => {
+                crate::ui::transport::show(self, ui);
+                crate::ui::lanes::show(self, ui);
+                egui::CentralPanel::default()
+                    .frame(egui::Frame::central_panel(ui.style()).inner_margin(0.0))
+                    .show(ui, |ui| crate::ui::editor::show(self, ui));
+            }
+            crate::sfx::Mode::Sounds => crate::ui::sfx::show(self, ui),
+        }
         crate::ui::dialogs::show(self, &ctx);
         crate::settings::window(self, &ctx);
         crate::ui::preview::end_frame(self);
@@ -569,9 +601,53 @@ impl eframe::App for OrchestreApp {
             storage.set_string(STORAGE_KEY, json);
         }
         self.settings.save(storage);
+        use orchestre_core::sfx::file::sound_to_json;
+        if let (Ok(sound), Ok(saved)) = (
+            sound_to_json(&self.sfx.sound),
+            sound_to_json(&self.sfx.baseline),
+        ) {
+            storage.set_string(SOUND_KEY, sound);
+            storage.set_string(SOUND_SAVED_KEY, saved);
+        }
+        let path = self
+            .sfx
+            .path
+            .as_ref()
+            .map(|p| p.to_string_lossy().into_owned());
+        storage.set_string(SOUND_PATH_KEY, path.unwrap_or_default());
+        let dir = self
+            .sfx
+            .library
+            .as_ref()
+            .map(|l| l.dir().to_string_lossy().into_owned());
+        storage.set_string(SOUND_DIR_KEY, dir.unwrap_or_default());
+        let mode = serde_json::to_string(&self.mode).unwrap_or_default();
+        storage.set_string(MODE_KEY, mode);
     }
 
     fn auto_save_interval(&self) -> std::time::Duration {
         std::time::Duration::from_secs(10)
+    }
+}
+
+/// Bring back the sound mode as it was: the sound, its file and folder.
+fn restore_sounds(app: &mut OrchestreApp, storage: &dyn eframe::Storage) {
+    use orchestre_core::sfx::file::parse_sound;
+    let get = |key| storage.get_string(key).filter(|s| !s.is_empty());
+    if let Some(sound) = get(SOUND_KEY).and_then(|j| parse_sound(&j).ok()) {
+        let path = get(SOUND_PATH_KEY).map(std::path::PathBuf::from);
+        app.sfx.set_sound(sound.clone(), path);
+        app.sfx.baseline = get(SOUND_SAVED_KEY)
+            .and_then(|j| parse_sound(&j).ok())
+            .unwrap_or(sound);
+    }
+    #[cfg(not(target_arch = "wasm32"))]
+    if let Some(dir) = get(SOUND_DIR_KEY).map(std::path::PathBuf::from)
+        && dir.is_dir()
+    {
+        app.sfx.library = Some(crate::sfx::Library::open(dir));
+    }
+    if let Some(mode) = get(MODE_KEY).and_then(|m| serde_json::from_str(&m).ok()) {
+        app.mode = mode;
     }
 }

@@ -1,5 +1,6 @@
 //! The engine-side view of a project, and the messages exchanged with it.
 
+use orchestre_core::sfx::{PlayOpts, Sound};
 use orchestre_core::{FxParams, Id, Instrument, PreviewNote, Project, Tick};
 use serde::{Deserialize, Serialize};
 
@@ -139,6 +140,18 @@ pub enum Cmd {
         notes: Vec<PreviewNote>,
     },
     StopPreview,
+    /// Play a sound effect once, on top of whatever is playing.
+    PlaySound {
+        sound: Box<Sound>,
+        opts: PlayOpts,
+    },
+    /// Fade out every sound effect that is playing.
+    StopSounds,
+    /// End looping sound effects: held layers fade out, repeats stop.
+    ReleaseSounds,
+    /// Change intensity, pitch and speed of every sound effect playing
+    /// (the seed and volume are ignored).
+    SoundLive(PlayOpts),
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]

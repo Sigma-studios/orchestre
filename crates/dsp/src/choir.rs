@@ -1,4 +1,4 @@
-//! Choir: a few detuned buzzy voices per note, shaped into vowels by three
+//! Choir: a few detuned buzzy voices per note, shaped into vowels by five
 //! resonant "formant" filters, like a human vocal tract.
 
 use orchestre_core::{Adsr, ChoirParams, Wave};
@@ -11,26 +11,143 @@ use crate::util::{Rng, TAU, midi_to_hz, pan_gains};
 const MAX_VOICES: usize = 16;
 const MAX_SINGERS: usize = 4;
 
-/// Formant (frequency Hz, level) for "aah", "ooh", "eeh".
-const VOWELS: [[(f32, f32); 3]; 3] = [
-    [(800.0, 1.0), (1150.0, 0.5), (2900.0, 0.25)],
-    [(350.0, 1.0), (600.0, 0.35), (2700.0, 0.1)],
-    [(300.0, 1.0), (2100.0, 0.3), (2900.0, 0.2)],
-];
-/// Formant bandwidths, Hz.
-const BANDWIDTHS: [f32; 3] = [80.0, 90.0, 120.0];
+/// Sung-vowel formants (frequency Hz, level dB, bandwidth Hz), F1..F5,
+/// from the Csound manual's formant tables (Appendix D), for "aah", "ooh"
+/// and "eeh" in four voice types.
+type Vowel = [(f32, f32, f32); 5];
 
-/// Formants for a vowel position 0..1 (aah → ooh → eeh).
-fn formants(vowel: f32) -> [(f32, f32); 3] {
+const BASS: [Vowel; 3] = [
+    [
+        (600.0, 0.0, 60.0),
+        (1040.0, -7.0, 70.0),
+        (2250.0, -9.0, 110.0),
+        (2450.0, -9.0, 120.0),
+        (2750.0, -20.0, 130.0),
+    ],
+    [
+        (350.0, 0.0, 40.0),
+        (600.0, -20.0, 80.0),
+        (2400.0, -32.0, 100.0),
+        (2675.0, -28.0, 120.0),
+        (2950.0, -36.0, 120.0),
+    ],
+    [
+        (250.0, 0.0, 60.0),
+        (1750.0, -30.0, 90.0),
+        (2600.0, -16.0, 100.0),
+        (3050.0, -22.0, 120.0),
+        (3340.0, -28.0, 120.0),
+    ],
+];
+const TENOR: [Vowel; 3] = [
+    [
+        (650.0, 0.0, 80.0),
+        (1080.0, -6.0, 90.0),
+        (2650.0, -7.0, 120.0),
+        (2900.0, -8.0, 130.0),
+        (3250.0, -22.0, 140.0),
+    ],
+    [
+        (350.0, 0.0, 40.0),
+        (600.0, -20.0, 60.0),
+        (2700.0, -17.0, 100.0),
+        (2900.0, -14.0, 120.0),
+        (3300.0, -26.0, 120.0),
+    ],
+    [
+        (290.0, 0.0, 40.0),
+        (1870.0, -15.0, 90.0),
+        (2800.0, -18.0, 100.0),
+        (3250.0, -20.0, 120.0),
+        (3540.0, -30.0, 120.0),
+    ],
+];
+const ALTO: [Vowel; 3] = [
+    [
+        (800.0, 0.0, 80.0),
+        (1150.0, -4.0, 90.0),
+        (2800.0, -20.0, 120.0),
+        (3500.0, -36.0, 130.0),
+        (4950.0, -60.0, 140.0),
+    ],
+    [
+        (325.0, 0.0, 50.0),
+        (700.0, -12.0, 60.0),
+        (2530.0, -30.0, 170.0),
+        (3500.0, -40.0, 180.0),
+        (4950.0, -64.0, 200.0),
+    ],
+    [
+        (350.0, 0.0, 50.0),
+        (1700.0, -20.0, 100.0),
+        (2700.0, -30.0, 120.0),
+        (3700.0, -36.0, 150.0),
+        (4950.0, -60.0, 200.0),
+    ],
+];
+const SOPRANO: [Vowel; 3] = [
+    [
+        (800.0, 0.0, 80.0),
+        (1150.0, -6.0, 90.0),
+        (2900.0, -32.0, 120.0),
+        (3900.0, -20.0, 130.0),
+        (4950.0, -50.0, 140.0),
+    ],
+    [
+        (325.0, 0.0, 50.0),
+        (700.0, -16.0, 60.0),
+        (2700.0, -35.0, 170.0),
+        (3800.0, -40.0, 180.0),
+        (4950.0, -60.0, 200.0),
+    ],
+    [
+        (270.0, 0.0, 60.0),
+        (2140.0, -12.0, 90.0),
+        (2950.0, -26.0, 100.0),
+        (3900.0, -26.0, 120.0),
+        (4950.0, -44.0, 120.0),
+    ],
+];
+
+/// Voice types and the note (MIDI) at the middle of their range.
+const VOICE_TYPES: [(f32, &[Vowel; 3]); 4] = [
+    (48.0, &BASS),
+    (57.0, &TENOR),
+    (65.0, &ALTO),
+    (72.0, &SOPRANO),
+];
+
+fn lerp_vowel(a: &Vowel, b: &Vowel, t: f32) -> Vowel {
+    std::array::from_fn(|i| {
+        let (x, y) = (a[i], b[i]);
+        (
+            x.0 + (y.0 - x.0) * t,
+            x.1 + (y.1 - x.1) * t,
+            x.2 + (y.2 - x.2) * t,
+        )
+    })
+}
+
+/// Formants (frequency, linear level, bandwidth) for a vowel position
+/// 0..1 (aah → ooh → eeh), sung at `note`: low notes by basses, high
+/// notes by sopranos, blending between voice types in between.
+fn formants(vowel: f32, note: f32) -> [(f32, f32, f32); 5] {
     let x = vowel.clamp(0.0, 1.0) * 2.0;
-    let (a, b, t) = if x <= 1.0 { (0, 1, x) } else { (1, 2, x - 1.0) };
-    let mut out = [(0.0, 0.0); 3];
-    for (i, o) in out.iter_mut().enumerate() {
-        let (fa, la) = VOWELS[a][i];
-        let (fb, lb) = VOWELS[b][i];
-        *o = (fa + (fb - fa) * t, la + (lb - la) * t);
-    }
-    out
+    let (va, vb, vt) = if x <= 1.0 { (0, 1, x) } else { (1, 2, x - 1.0) };
+    let at = |table: &[Vowel; 3]| lerp_vowel(&table[va], &table[vb], vt);
+    let i = VOICE_TYPES
+        .iter()
+        .position(|(center, _)| note < *center)
+        .unwrap_or(VOICE_TYPES.len());
+    let v = if i == 0 {
+        at(VOICE_TYPES[0].1)
+    } else if i == VOICE_TYPES.len() {
+        at(VOICE_TYPES[i - 1].1)
+    } else {
+        let (lo, hi) = (VOICE_TYPES[i - 1], VOICE_TYPES[i]);
+        lerp_vowel(&at(lo.1), &at(hi.1), (note - lo.0) / (hi.0 - lo.0))
+    };
+    v.map(|(f, db, bw)| (f, 10f32.powf(db / 20.0), bw))
 }
 
 #[derive(Clone, Copy, Default)]
@@ -44,7 +161,7 @@ struct Voice {
     vib: [f32; MAX_SINGERS],
     detune: [f32; MAX_SINGERS],
     env: Env,
-    formants: [Svf; 3],
+    formants: [Svf; 5],
     rng: Rng,
     pan: (f32, f32),
 }
@@ -148,21 +265,23 @@ impl ChoirEngine {
         let (p, sr, n) = (self.params, self.sr, l.len());
         let singers = 1 + (p.ensemble * 3.0).round() as usize;
         let spread = 4.0 + p.ensemble * 14.0;
-        let form = formants(p.vowel);
         let norm = 1.0 / (singers as f32).sqrt();
-        let gain = p.gain * 0.9;
+        // The sung formant levels are low; keep the choir as loud as before.
+        let gain = p.gain * 1.6;
         for v in self.voices.iter_mut().filter(|v| v.active) {
             // Pitch and formants are updated once per block.
             let mut dts = [0.0f32; MAX_SINGERS];
             for ((dt, vib), detune) in dts.iter_mut().zip(&mut v.vib).zip(&v.detune).take(singers) {
-                let wobble = (*vib * TAU).sin() * p.vibrato * 0.25;
-                *vib = (*vib + (5.0 + 0.4 * detune) * n as f32 / sr).fract();
+                // Singers: ~5.5–6.7 Hz (Prame), up to about ±1 semitone.
+                let wobble = (*vib * TAU).sin() * p.vibrato * 0.75;
+                *vib = (*vib + (5.8 + 0.4 * detune) * n as f32 / sr).fract();
                 let pitch = v.note as f32 + wobble + detune * spread / 100.0;
                 *dt = midi_to_hz(pitch) / sr;
             }
-            let mut ks = [0.0f32; 3];
+            let form = formants(p.vowel, v.note as f32);
+            let mut ks = [0.0f32; 5];
             for (i, f) in v.formants.iter_mut().enumerate() {
-                let q = form[i].0 / BANDWIDTHS[i];
+                let q = form[i].0 / form[i].2;
                 f.set_q(form[i].0, q, sr);
                 ks[i] = 1.0 / q;
             }

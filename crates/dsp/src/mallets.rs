@@ -13,12 +13,14 @@ const MAX_PARTIALS: usize = 4;
 fn modes(kind: MalletKind) -> &'static [(f32, f32, f32)] {
     match kind {
         MalletKind::Marimba => &[(1.0, 1.0, 1.0), (3.93, 0.35, 0.35), (9.2, 0.12, 0.15)],
-        MalletKind::Vibraphone => &[(1.0, 1.0, 1.0), (3.98, 0.25, 0.5), (9.9, 0.08, 0.3)],
+        // Tuned to two octaves, then two octaves and a major third: 1:4:10.
+        MalletKind::Vibraphone => &[(1.0, 1.0, 1.0), (4.0, 0.25, 0.5), (10.0, 0.08, 0.3)],
         MalletKind::Xylophone => &[
             (1.0, 1.0, 1.0),
+            // A bar tuned to 3:1 (euphonics.org, marimbas and xylophones).
             (3.0, 0.5, 0.6),
-            (6.25, 0.2, 0.4),
-            (10.1, 0.1, 0.3),
+            (6.16, 0.2, 0.4),
+            (10.29, 0.1, 0.3),
         ],
         MalletKind::Glockenspiel => &[
             (1.0, 1.0, 1.0),
@@ -29,15 +31,19 @@ fn modes(kind: MalletKind) -> &'static [(f32, f32, f32)] {
     }
 }
 
-/// Ring time (seconds, to -60 dB) of the fundamental.
+/// Ring time (seconds) of the fundamental. After the decay periods in
+/// US patent 4,411,187: marimba ~2 s at C3 down to 1/50 s at C7,
+/// xylophone ~1 s down to 1/50 s, vibraphone 30 s at F3 down to 6 s at F6.
+/// (Glockenspiel: no source found.)
 fn ring_time(kind: MalletKind, pitch: f32) -> f32 {
-    let (base, center, lo, hi) = match kind {
-        MalletKind::Marimba => (1.4, 48.0, 0.3, 2.8),
-        MalletKind::Vibraphone => (4.0, 60.0, 1.2, 6.0),
-        MalletKind::Xylophone => (0.6, 60.0, 0.2, 1.2),
-        MalletKind::Glockenspiel => (2.8, 72.0, 1.0, 4.0),
+    // (seconds at `center`, octaves per halving, lo, hi)
+    let (base, center, halving, lo, hi) = match kind {
+        MalletKind::Marimba => (2.0, 48.0, 0.6, 0.02, 3.0),
+        MalletKind::Vibraphone => (30.0, 53.0, 1.29, 4.0, 30.0),
+        MalletKind::Xylophone => (1.0, 65.0, 0.62, 0.02, 1.2),
+        MalletKind::Glockenspiel => (2.8, 72.0, 2.0, 1.0, 4.0),
     };
-    (base * (2.0f32).powf(-(pitch - center) / 24.0)).clamp(lo, hi)
+    (base * (2.0f32).powf(-(pitch - center) / 12.0 / halving)).clamp(lo, hi)
 }
 
 #[derive(Clone, Copy, Default)]

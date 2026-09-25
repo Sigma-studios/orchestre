@@ -307,7 +307,7 @@ fn synth_ui(ui: &mut Ui, p: &mut SynthParams) {
         ui.add(Slider::new(&mut p.noise, 0.0..=1.0).text("Noise"));
         let mut uni = p.unison as i32;
         if ui
-            .add(Slider::new(&mut uni, 1..=5).text("Unison voices"))
+            .add(Slider::new(&mut uni, 1..=7).text("Unison voices"))
             .changed()
         {
             p.unison = uni as u8;
@@ -536,7 +536,8 @@ fn epiano_ui(ui: &mut Ui, p: &mut EPianoParams) {
 
 fn organ_ui(ui: &mut Ui, p: &mut OrganParams) {
     section(ui, "Sound", true, |ui| {
-        knob(ui, &mut p.rotary, 0.0..=1.0, "Spinning speaker").on_hover_text("Off ← slow → fast");
+        knob(ui, &mut p.rotary, 0.0..=1.0, "Spinning speaker")
+            .on_hover_text("Off, then slow (left half) or fast (right half): the rotors take a moment to change speed");
         knob(ui, &mut p.click, 0.0..=1.0, "Key click");
         ui.checkbox(&mut p.percussion, "Percussion ping")
             .on_hover_text("A short bright ping at the start of each note");

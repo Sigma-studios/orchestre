@@ -8,6 +8,7 @@ mod io;
 mod midi;
 mod record;
 mod settings;
+mod sfx;
 mod theme;
 mod ui;
 

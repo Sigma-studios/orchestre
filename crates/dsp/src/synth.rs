@@ -2,12 +2,12 @@ use orchestre_core::SynthParams;
 
 use crate::env::Env;
 use crate::filter::Svf;
-use crate::fx::Chorus;
+use crate::fx::Ensemble;
 use crate::osc::Osc;
 use crate::util::{Rng, TAU, midi_to_hz, pan_gains};
 
 pub const MAX_VOICES: usize = 16;
-const MAX_UNISON: usize = 5;
+const MAX_UNISON: usize = 7;
 const MONO_STACK: usize = 8;
 
 #[derive(Clone, Copy, Default)]
@@ -96,19 +96,35 @@ impl Voice {
         let mut dt2 = [0.0f32; MAX_UNISON];
         let mut gl = [0.0f32; MAX_UNISON];
         let mut gr = [0.0f32; MAX_UNISON];
-        let norm = 1.0 / (uni as f32).sqrt();
+        // After Szabo's analysis of the JP-8000 supersaw: inner voices sit
+        // closer to the centre than outer ones, and the centre voice is a
+        // little louder than each side voice (his mix curves at half mix).
+        let (center, side) = if uni >= 3 { (0.72, 0.5) } else { (1.0, 1.0) };
+        let middle = (uni % 2 == 1).then_some(uni / 2);
+        let power: f32 = (0..uni)
+            .map(|i| {
+                if Some(i) == middle {
+                    center * center
+                } else {
+                    side * side
+                }
+            })
+            .sum();
+        let norm = 1.0 / power.sqrt();
         for i in 0..uni {
             let pos = if uni == 1 {
                 0.0
             } else {
                 i as f32 / (uni - 1) as f32 * 2.0 - 1.0
             };
-            let ratio = (2.0f32).powf(pos * p.unison_spread * 0.5 / 1200.0);
+            let spaced = pos.signum() * pos.abs().powf(1.5);
+            let ratio = (2.0f32).powf(spaced * p.unison_spread * 0.5 / 1200.0);
             dt1[i] = f1 * ratio / sr;
             dt2[i] = f2 * ratio / sr;
+            let level = if Some(i) == middle { center } else { side } * norm;
             let (a, b) = pan_gains(pos * p.width);
-            gl[i] = a * norm;
-            gr[i] = b * norm;
+            gl[i] = a * level;
+            gr[i] = b * level;
         }
         let dt_sub = f1 * 0.5 / sr;
 
@@ -167,7 +183,7 @@ pub struct SynthEngine {
     /// Held notes in mono mode: (pitch, vel, off_at), most recent last.
     stack: [(u8, f32, f64); MONO_STACK],
     stack_len: usize,
-    chorus: Chorus,
+    chorus: Ensemble,
 }
 
 impl SynthEngine {
@@ -179,7 +195,7 @@ impl SynthEngine {
             counter: 0,
             stack: [(0, 0.0, 0.0); MONO_STACK],
             stack_len: 0,
-            chorus: Chorus::new(sr),
+            chorus: Ensemble::new(sr),
         }
     }
 

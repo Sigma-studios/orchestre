@@ -4,12 +4,115 @@
 use orchestre_core::OrganParams;
 
 use crate::filter::Svf;
-use crate::fx::Chorus;
-use crate::util::{Rng, TAU, decay_coef, midi_to_hz};
+use crate::util::{Rng, TAU, decay_coef, flush, midi_to_hz};
 
 const MAX_VOICES: usize = 16;
 /// Harmonic of each drawbar: 16', 5 1/3', 8', 4', 2 2/3', 2', 1 3/5', 1 1/3', 1'.
 const RATIOS: [f32; 9] = [0.5, 1.5, 1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 8.0];
+/// The highest of the Hammond's 91 tonewheels; harmonics above it fold
+/// back down an octave, as on the real organ.
+const TOP_WHEEL: f32 = 5924.6;
+
+/// Drawbar position (0..1, 8 steps) to level: each step is ~3 dB.
+fn drawbar_gain(v: f32) -> f32 {
+    if v <= 0.01 {
+        0.0
+    } else {
+        10f32.powf(-3.0 * 8.0 * (1.0 - v.min(1.0)) / 20.0)
+    }
+}
+
+/// One rotor of a Leslie speaker: speed with inertia, and the Doppler
+/// (a delay swinging with the rotor) and loudness sweep it causes.
+struct Rotor {
+    phase: f32,
+    speed: f32,
+    slow: f32,
+    fast: f32,
+    /// Time constants to speed up and to slow down, seconds.
+    accel: f32,
+    decel: f32,
+    /// Doppler swing and loudness sweep.
+    swing: f32,
+    am: f32,
+    buf: Vec<f32>,
+    pos: usize,
+}
+
+impl Rotor {
+    fn new(sr: f32, slow: f32, fast: f32, accel: f32, decel: f32, swing: f32, am: f32) -> Self {
+        Rotor {
+            phase: 0.0,
+            speed: slow,
+            slow,
+            fast,
+            accel,
+            decel,
+            swing: swing * sr,
+            am,
+            buf: vec![0.0; (0.004 * sr) as usize + 4],
+            pos: 0,
+        }
+    }
+
+    /// One sample through the rotor; returns (left, right).
+    #[inline]
+    fn process(&mut self, x: f32, fast: bool, sr: f32) -> (f32, f32) {
+        let target = if fast { self.fast } else { self.slow };
+        let tau = if target > self.speed {
+            self.accel
+        } else {
+            self.decel
+        };
+        self.speed += (target - self.speed) * (1.0 / (tau * sr)).min(1.0);
+        self.phase = (self.phase + self.speed / sr).fract();
+        let len = self.buf.len();
+        self.buf[self.pos] = x;
+        let sin = (self.phase * TAU).sin();
+        let delay = 2.0 + self.swing * (1.0 + sin);
+        let read = self.pos as f32 - delay + len as f32;
+        let i0 = read.floor() as usize % len;
+        let f = read.fract();
+        let y = self.buf[i0] * (1.0 - f) + self.buf[(i0 + 1) % len] * f;
+        self.pos = (self.pos + 1) % len;
+        // Two microphones on either side: one hears the rotor coming as
+        // the other hears it going.
+        let cos = (self.phase * TAU).cos();
+        (y * (1.0 + self.am * cos), y * (1.0 - self.am * cos))
+    }
+}
+
+/// A Leslie 122-style speaker: treble horn and bass drum, split at 800 Hz.
+/// Speeds and inertia from setBfree's defaults (horn 40.32 / 423.36 rpm,
+/// drum 36 / 357.3 rpm); horn swing ±0.5 ms for its 17 cm radius (JOS,
+/// "Doppler simulation"). The loudness sweep depths are by ear.
+struct Leslie {
+    split: Svf,
+    horn: Rotor,
+    drum: Rotor,
+}
+
+impl Leslie {
+    fn new(sr: f32) -> Self {
+        let mut split = Svf::default();
+        split.set(800.0, 0.0, sr);
+        Leslie {
+            split,
+            horn: Rotor::new(sr, 0.672, 7.056, 0.161, 0.321, 0.0005, 0.35),
+            drum: Rotor::new(sr, 0.6, 5.955, 4.127, 1.371, 0.0002, 0.15),
+        }
+    }
+
+    fn process(&mut self, l: &mut [f32], r: &mut [f32], fast: bool, sr: f32) {
+        for i in 0..l.len() {
+            let (low, _, high) = self.split.process((l[i] + r[i]) * 0.5);
+            let (hl, hr) = self.horn.process(flush(high), fast, sr);
+            let (dl, dr) = self.drum.process(flush(low), fast, sr);
+            l[i] = hl + dl;
+            r[i] = hr + dr;
+        }
+    }
+}
 
 #[derive(Clone, Copy, Default)]
 struct Wheel {
@@ -44,8 +147,7 @@ pub struct OrganEngine {
     release_coef: f32,
     perc_coef: f32,
     click_coef: f32,
-    rotor: f32,
-    chorus: Chorus,
+    leslie: Leslie,
 }
 
 impl OrganEngine {
@@ -57,10 +159,10 @@ impl OrganEngine {
             counter: 0,
             attack_inc: 1.0 / (0.005 * sr),
             release_coef: decay_coef(0.06, sr),
-            perc_coef: decay_coef(0.5, sr),
+            // Fast percussion (setBfree: 1 s).
+            perc_coef: decay_coef(1.0, sr),
             click_coef: decay_coef(0.006, sr),
-            rotor: 0.0,
-            chorus: Chorus::new(sr),
+            leslie: Leslie::new(sr),
         }
     }
 
@@ -84,9 +186,16 @@ impl OrganEngine {
             })
             .unwrap_or(0);
         let f0 = midi_to_hz(pitch as f32);
+        // Percussion is single-trigger: it only sounds when no other key
+        // is held (legato playing doesn't retrigger it).
+        let legato = self.voices.iter().any(|v| v.active && !v.released);
         let v = &mut self.voices[idx];
         for (w, ratio) in v.wheels.iter_mut().zip(RATIOS) {
-            let omega = TAU * (f0 * ratio).min(sr * 0.45) / sr;
+            let mut f = f0 * ratio;
+            while f > TOP_WHEEL {
+                f *= 0.5;
+            }
+            let omega = TAU * f.min(sr * 0.45) / sr;
             *w = Wheel {
                 c: 1.0,
                 s: 0.0,
@@ -100,7 +209,11 @@ impl OrganEngine {
         v.age = self.counter;
         v.level = 0.0;
         v.released = false;
-        v.perc = if self.params.percussion { 0.6 } else { 0.0 };
+        v.perc = if self.params.percussion && !legato {
+            0.6
+        } else {
+            0.0
+        };
         // Organs aren't touch sensitive, but a soft hit gets a softer click.
         v.click = self.params.click * (0.5 + 0.5 * vel) * 0.5;
         v.click_filter.reset();
@@ -138,7 +251,11 @@ impl OrganEngine {
 
     pub fn render(&mut self, l: &mut [f32], r: &mut [f32]) {
         let p = self.params;
-        let bars = p.drawbars;
+        let mut bars = p.drawbars.map(drawbar_gain);
+        if p.percussion {
+            // On a B-3, percussion takes the 1' drawbar's signal.
+            bars[8] = 0.0;
+        }
         let total: f32 = bars.iter().sum();
         let norm = p.gain * 0.35 / (1.0 + total * 0.35);
         let (attack, release, perc_coef, click_coef) = (
@@ -184,18 +301,10 @@ impl OrganEngine {
             }
         }
 
-        // Rotating speaker: the horn sweeps left/right (amplitude) and
-        // towards/away from you (pitch wobble, via the chorus).
+        // Rotating speaker: slow ("chorale") below the middle of the knob,
+        // fast ("tremolo") above; the rotors take time to change speed.
         if p.rotary > 0.0 {
-            let speed = 0.8 + 5.9 * p.rotary;
-            let depth = 0.25 + 0.15 * p.rotary;
-            for i in 0..l.len() {
-                let m = (self.rotor * TAU).sin() * depth;
-                l[i] *= 1.0 + m;
-                r[i] *= 1.0 - m;
-                self.rotor = (self.rotor + speed / self.sr).fract();
-            }
-            self.chorus.process(l, r, 0.3 + 0.4 * p.rotary);
+            self.leslie.process(l, r, p.rotary >= 0.5, self.sr);
         }
     }
 }

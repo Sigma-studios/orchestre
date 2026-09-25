@@ -99,7 +99,7 @@ fn record_overlay(app: &OrchestreApp, ui: &Ui, rect: Rect) {
     );
 }
 
-fn toast(app: &OrchestreApp, ui: &Ui, rect: Rect) {
+pub fn toast(app: &OrchestreApp, ui: &Ui, rect: Rect) {
     let Some((msg, _)) = &app.toast else { return };
     let p = ui.painter();
     let font = FontId::proportional(14.0);

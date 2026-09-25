@@ -4,6 +4,7 @@ pub mod edit;
 pub mod file;
 pub mod instrument;
 pub mod project;
+pub mod sfx;
 pub mod theory;
 pub mod time;
 

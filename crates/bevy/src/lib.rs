@@ -17,6 +17,10 @@
 //! }
 //! ```
 //!
+//! Sound effects (`.orsfx` files) play the same way, with a new random
+//! variation on each play: see [`OrchestreSound`], and [`PlaySfx`] for
+//! intensity, pitch and voice limits.
+//!
 //! Songs loop seamlessly by default (the engine loops on the beat, with no
 //! gap and no extra memory). Don't use `PlaybackSettings::LOOP` with them:
 //! Bevy would buffer the whole song in memory and loop *after* the reverb
@@ -31,6 +35,8 @@
 //! # }
 //! ```
 
+mod sfx;
+
 use std::sync::Arc;
 
 use bevy::asset::io::Reader;
@@ -41,22 +47,33 @@ use orchestre_dsp::{Cmd, Engine, Song};
 use serde::{Deserialize, Serialize};
 
 pub use orchestre_core::Project;
+pub use orchestre_core::sfx::{PlayOpts, Sound};
+pub use sfx::{
+    OrchestreSound, OrchestreSoundLoader, PlaySfx, SfxControl, SfxSettings, SfxSource, SfxVoice,
+    SoundDecoder, SoundLoadError, SoundPlayback,
+};
 
 /// Rodio resamples to the output device, so any common rate works.
 const SAMPLE_RATE: u32 = 48_000;
-const BLOCK_FRAMES: usize = 512;
+pub(crate) const BLOCK_FRAMES: usize = 512;
 /// Non-looping songs stop once their tail has been silent this long...
 const SILENCE_TO_STOP: f32 = 0.25;
 /// ...or at the latest this long after the last bar.
 const MAX_TAIL: f32 = 8.0;
 
-/// Registers `.orch` files as playable audio assets.
+/// Registers `.orch` songs and `.orsfx` sound effects as playable audio
+/// assets, and plays [`PlaySfx`] entities.
 pub struct OrchestrePlugin;
 
 impl Plugin for OrchestrePlugin {
     fn build(&self, app: &mut App) {
         app.add_audio_source::<OrchestreSong>()
             .register_asset_loader(OrchestreLoader);
+        app.add_audio_source::<OrchestreSound>()
+            .add_audio_source::<SoundPlayback>()
+            .register_asset_loader(OrchestreSoundLoader)
+            .init_resource::<SfxSettings>()
+            .add_systems(Update, (sfx::start_sfx, sfx::control_sfx).chain());
     }
 }
 

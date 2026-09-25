@@ -8,6 +8,109 @@ pub fn show(app: &mut OrchestreApp, ctx: &egui::Context) {
     key_lock(app, ctx);
     delete_track(app, ctx);
     rename(app, ctx);
+    replace_sound(app, ctx);
+    quit(app, ctx);
+}
+
+/// Quitting with unsaved sounds: save them all, drop them, or stay.
+fn quit(app: &mut OrchestreApp, ctx: &egui::Context) {
+    if !app.sfx.quitting {
+        return;
+    }
+    let names = app.sfx.unsaved_names();
+    let mut choice = None;
+    let resp = egui::Modal::new(egui::Id::new("quit")).show(ctx, |ui| {
+        ui.set_max_width(420.0);
+        let n = names.len();
+        ui.heading(match n {
+            1 => "Save changes to 1 sound before quitting?".to_string(),
+            n => format!("Save changes to {n} sounds before quitting?"),
+        });
+        for name in names.iter().take(8) {
+            ui.label(format!("• {name}"));
+        }
+        if n > 8 {
+            ui.label(RichText::new(format!("and {} more", n - 8)).color(theme::TEXT_DIM));
+        }
+        ui.add_space(10.0);
+        ui.horizontal(|ui| {
+            let save = egui::Button::new(RichText::new("Save all").color(Color32::WHITE))
+                .fill(Color32::from_rgb(50, 110, 70));
+            if ui.add(save).clicked() {
+                choice = Some(Some(true));
+            }
+            if ui.button("Don't save").clicked() {
+                choice = Some(Some(false));
+            }
+            if ui.button("Cancel").clicked() {
+                choice = Some(None);
+            }
+        });
+    });
+    if resp.should_close() && choice.is_none() {
+        choice = Some(None);
+    }
+    let Some(choice) = choice else { return };
+    app.sfx.quitting = false;
+    let quit = match choice {
+        #[cfg(not(target_arch = "wasm32"))]
+        Some(true) => crate::io::save_all_sounds(app),
+        #[cfg(target_arch = "wasm32")]
+        Some(true) => crate::io::save_sound(app),
+        Some(false) => {
+            // So the sound reopened next time is the saved one.
+            app.sfx.discard_all();
+            true
+        }
+        None => false,
+    };
+    if quit {
+        app.sfx.quit_confirmed = true;
+        ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+    }
+}
+
+/// The sound has unsaved changes and another one is being opened.
+fn replace_sound(app: &mut OrchestreApp, ctx: &egui::Context) {
+    let Some(next) = &app.sfx.replace else {
+        return;
+    };
+    let (name, next_name) = (app.sfx.sound.name.clone(), next.sound.name.clone());
+    let mut choice = None;
+    let resp = egui::Modal::new(egui::Id::new("replacesound")).show(ctx, |ui| {
+        ui.set_max_width(420.0);
+        ui.heading(format!("Save changes to “{name}”?"));
+        ui.label(format!(
+            "You are opening “{next_name}”. Changes you haven't saved will be lost."
+        ));
+        ui.add_space(10.0);
+        ui.horizontal(|ui| {
+            let save = egui::Button::new(RichText::new("Save").color(Color32::WHITE))
+                .fill(Color32::from_rgb(50, 110, 70));
+            if ui.add(save).clicked() {
+                choice = Some(Some(true));
+            }
+            if ui.button("Don't save").clicked() {
+                choice = Some(Some(false));
+            }
+            if ui.button("Cancel").clicked() {
+                choice = Some(None);
+            }
+        });
+    });
+    if resp.should_close() && choice.is_none() {
+        choice = Some(None);
+    }
+    let Some(choice) = choice else { return };
+    let next = app.sfx.replace.take();
+    let go = match choice {
+        Some(true) => crate::io::save_sound(app),
+        Some(false) => true,
+        None => false,
+    };
+    if go && let Some(r) = next {
+        app.set_sound(r.sound, r.path);
+    }
 }
 
 fn key_lock(app: &mut OrchestreApp, ctx: &egui::Context) {

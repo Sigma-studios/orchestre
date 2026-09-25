@@ -296,3 +296,54 @@ fn muted_strings_stop_quickly() {
         peak(&l)
     );
 }
+
+#[test]
+fn engine_plays_sound_effects_over_the_song() {
+    use orchestre_core::sfx::{PlayOpts, presets};
+    let mut e = Engine::new(SR as f32);
+    let sound = presets::find("Coin").unwrap().sound();
+    let (mut l, mut r) = (vec![0.0f32; 512], vec![0.0f32; 512]);
+    e.process(&mut l, &mut r);
+    assert!(peak(&l) < 1e-6, "silent before");
+    for seed in 0..40 {
+        // More than the engine holds: the oldest are cut, nothing breaks.
+        e.handle(Cmd::PlaySound {
+            sound: Box::new(sound.clone()),
+            opts: PlayOpts::seeded(seed),
+        });
+    }
+    e.process(&mut l, &mut r);
+    check_clean(&l);
+    assert!(peak(&l) > 0.05, "plays");
+    e.handle(Cmd::StopSounds);
+    for _ in 0..4 {
+        e.process(&mut l, &mut r);
+    }
+    // Only the reverb tail can remain.
+    assert!(peak(&l) < 0.05, "stopped: {}", peak(&l));
+}
+
+#[test]
+fn engine_releases_looping_sounds() {
+    use orchestre_core::sfx::{PlayOpts, presets};
+    let mut e = Engine::new(SR as f32);
+    let (mut l, mut r) = (vec![0.0f32; 4410], vec![0.0f32; 4410]);
+    e.handle(Cmd::PlaySound {
+        sound: Box::new(presets::find("Engine").unwrap().sound()),
+        opts: PlayOpts::default(),
+    });
+    for _ in 0..30 {
+        e.process(&mut l, &mut r);
+    }
+    assert!(peak(&l) > 0.02, "still running after 3s");
+    e.handle(Cmd::SoundLive(PlayOpts {
+        intensity: 1.8,
+        rate: 2.0,
+        ..PlayOpts::default()
+    }));
+    e.handle(Cmd::ReleaseSounds);
+    for _ in 0..30 {
+        e.process(&mut l, &mut r);
+    }
+    assert!(peak(&l) < 1e-3, "released: {}", peak(&l));
+}

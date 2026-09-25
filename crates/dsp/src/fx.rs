@@ -199,3 +199,60 @@ impl Chorus {
         }
     }
 }
+
+/// String-ensemble chorus, after the Solina / ARP string machines: three
+/// delay taps 120° apart, each swept by a slow (~0.6 Hz) and a shallow fast
+/// (~6 Hz) LFO. (Rates from Haible's triple-chorus notes and synth forums;
+/// the delay range is a guess in the BBD region, 3–12 ms.)
+pub struct Ensemble {
+    buf: [Vec<f32>; 2],
+    pos: usize,
+    slow: f32,
+    fast: f32,
+    sr: f32,
+}
+
+impl Ensemble {
+    pub fn new(sr: f32) -> Self {
+        let len = (sr * 0.03) as usize + 2;
+        Ensemble {
+            buf: [vec![0.0; len], vec![0.0; len]],
+            pos: 0,
+            slow: 0.0,
+            fast: 0.0,
+            sr,
+        }
+    }
+
+    /// Process a block in place; `amount` 0..1.
+    pub fn process(&mut self, l: &mut [f32], r: &mut [f32], amount: f32) {
+        let len = self.buf[0].len();
+        let (wet, dry) = (amount * 0.55, 1.0 - amount * 0.1);
+        let base = 0.007 * self.sr;
+        let slow_depth = 0.0025 * self.sr;
+        let fast_depth = 0.0003 * self.sr;
+        let third = std::f32::consts::TAU / 3.0;
+        for i in 0..l.len() {
+            self.buf[0][self.pos] = l[i];
+            self.buf[1][self.pos] = r[i];
+            let mut taps = [0.0f32; 3];
+            for (k, t) in taps.iter_mut().enumerate() {
+                let phase = k as f32 * third;
+                let d = base
+                    + slow_depth * (self.slow * TAU + phase).sin()
+                    + fast_depth * (self.fast * TAU + phase).sin();
+                let read = self.pos as f32 - d + len as f32;
+                let i0 = read.floor() as usize % len;
+                let frac = read.fract();
+                // Taps alternate between the channels for width.
+                let b = &self.buf[k % 2];
+                *t = b[i0] * (1.0 - frac) + b[(i0 + 1) % len] * frac;
+            }
+            l[i] = l[i] * dry + (taps[0] + taps[2] * 0.5) * wet;
+            r[i] = r[i] * dry + (taps[1] + taps[2] * 0.5) * wet;
+            self.pos = (self.pos + 1) % len;
+            self.slow = (self.slow + 0.6 / self.sr).fract();
+            self.fast = (self.fast + 6.0 / self.sr).fract();
+        }
+    }
+}

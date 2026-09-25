@@ -188,7 +188,7 @@ impl SynthPreset {
                 lfo_rate: 0.3,
                 lfo_cutoff: 0.4,
                 amp: Adsr::new(0.6, 1.0, 0.85, 1.5),
-                gain: 0.6,
+                gain: 0.75,
                 ..base
             },
             SynthPreset::Pluck => SynthParams {
@@ -225,14 +225,16 @@ impl SynthPreset {
                 osc2: Wave::Saw,
                 osc2_semitones: 12,
                 osc_mix: 0.25,
-                unison: 5,
-                unison_spread: 25.0,
+                // Szabo's JP-8000 analysis: 7 saws; ~±18–46 cents at half to
+                // three-quarter detune.
+                unison: 7,
+                unison_spread: 40.0,
                 width: 1.0,
                 cutoff: 5000.0,
                 resonance: 0.1,
                 filter_env: 0.5,
                 amp: Adsr::new(0.02, 0.4, 0.8, 0.4),
-                gain: 0.5,
+                gain: 0.6,
                 ..base
             },
             SynthPreset::Chiptune => SynthParams {
@@ -258,7 +260,8 @@ impl SynthPreset {
                 resonance: 0.0,
                 filter_env: 0.0,
                 amp: Adsr::new(0.002, 2.5, 0.0, 0.3),
-                bend: 7.0,
+                // Measured TR-808 bass drums start about a semitone sharp.
+                bend: 1.0,
                 bend_time: 0.06,
                 mono: true,
                 glide: 0.05,
@@ -312,8 +315,11 @@ impl SynthPreset {
                 resonance: 0.0,
                 filter_env: 0.3,
                 amp: Adsr::new(0.07, 0.2, 0.85, 0.15),
+                // Flute vibrato is mostly breath (brightness), ~5 Hz
+                // (Sound on Sound, "Practical Flute Synthesis").
                 lfo_rate: 5.2,
-                lfo_pitch: 0.12,
+                lfo_pitch: 0.04,
+                lfo_cutoff: 0.3,
                 gain: 0.75,
                 ..base
             },
@@ -331,7 +337,8 @@ impl SynthPreset {
                 filter_env: 0.4,
                 filter_adsr: Adsr::new(0.4, 1.0, 0.7, 0.8),
                 amp: Adsr::new(0.35, 0.5, 0.9, 0.9),
-                lfo_rate: 4.8,
+                // String players' vibrato: ~5–7 Hz.
+                lfo_rate: 6.0,
                 lfo_pitch: 0.05,
                 chorus: 0.7,
                 gain: 0.55,
@@ -550,7 +557,8 @@ impl DrumKit {
             },
             DrumKit::Boomy808 => DrumParams {
                 kit: self,
-                tune: -3.0,
+                // The TR-808 bass drum sits near 50 Hz: untransposed.
+                tune: 0.0,
                 decay: 2.2,
                 punch: 0.2,
                 snappy: 0.4,
@@ -766,7 +774,7 @@ impl PluckKind {
                 kind: self,
                 brightness: 0.55,
                 decay: 1.0,
-                position: 0.2,
+                position: 0.3,
                 body: 0.5,
                 ring: false,
                 gain: 0.8,
@@ -775,7 +783,7 @@ impl PluckKind {
                 kind: self,
                 brightness: 0.4,
                 decay: 1.3,
-                position: 0.45,
+                position: 1.0,
                 body: 0.2,
                 ring: true,
                 gain: 0.8,
@@ -849,27 +857,31 @@ impl OrganPreset {
         match self {
             OrganPreset::Jazz => OrganParams {
                 preset: self,
+                // Jimmy Smith's 888000000 with percussion.
                 drawbars: [1.0, 1.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
                 percussion: true,
                 click: 0.4,
                 rotary: 0.25,
-                gain: 0.7,
+                gain: 0.85,
             },
             OrganPreset::Rock => OrganParams {
                 preset: self,
-                drawbars: [1.0, 1.0, 1.0, 1.0, 0.5, 0.4, 0.0, 0.0, 0.3],
+                // Jon Lord's 888800000.
+                drawbars: [1.0, 1.0, 1.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0],
                 percussion: false,
                 click: 0.6,
                 rotary: 0.9,
-                gain: 0.6,
+                gain: 0.72,
             },
             OrganPreset::Church => OrganParams {
                 preset: self,
-                drawbars: [0.9, 0.5, 1.0, 0.8, 0.5, 0.7, 0.3, 0.3, 0.6],
+                // All stops out, 888888888 (no documented "church"
+                // registration: this is the full organ).
+                drawbars: [1.0; 9],
                 percussion: false,
                 click: 0.0,
                 rotary: 0.0,
-                gain: 0.55,
+                gain: 0.42,
             },
         }
     }
@@ -884,7 +896,7 @@ pub struct OrganParams {
     pub percussion: bool,
     /// Key click, 0..1.
     pub click: f32,
-    /// Rotating speaker: 0 = off, 1 = fast.
+    /// Rotating speaker: 0 = off, up to 0.5 = slow, above = fast.
     pub rotary: f32,
     pub gain: f32,
 }

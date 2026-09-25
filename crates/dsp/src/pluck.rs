@@ -82,7 +82,8 @@ impl Voice {
         self.lp = 0.0;
 
         // Ring time: low strings sustain longer.
-        let ring = (6.0 * (f / 110.0).powf(-0.35)).clamp(0.8, 12.0) * p.decay;
+        // Ring time falls as f^-0.4 (measured on harps, Woodhouse 2021).
+        let ring = (6.0 * (f / 110.0).powf(-0.4)).clamp(0.8, 12.0) * p.decay;
         // Each sample passes the loss once per trip around the loop (one
         // period), so the per-trip factor is set from the frequency.
         self.gain = (0.001f32).powf(1.0 / (ring * f));
@@ -174,7 +175,8 @@ impl PluckEngine {
         self.params = params;
         let (a, b) = match params.kind {
             PluckKind::BassGuitar => (70.0, 160.0),
-            PluckKind::Koto => (180.0, 450.0),
+            // Measured koto: 85 Hz air mode, 100 Hz first body mode (ICA 2019).
+            PluckKind::Koto => (85.0, 100.0),
             _ => (105.0, 230.0),
         };
         self.body[0].set(a, 0.5, self.sr);

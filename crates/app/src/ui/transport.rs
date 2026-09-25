@@ -14,6 +14,8 @@ pub fn show(app: &mut OrchestreApp, ui: &mut Ui) {
 
                 file_menu(app, ui);
                 ui.separator();
+                crate::ui::sfx::mode_switch(app, ui);
+                ui.separator();
 
                 let running = app.playing || app.rec.counting.is_some();
                 let play_label = if running { "⏹ Stop" } else { "▶ Play" };
@@ -213,8 +215,8 @@ fn record_controls(app: &mut OrchestreApp, ui: &mut Ui) {
         })
         .min_size(egui::vec2(60.0, 28.0));
     let hover = match &target {
-        Some(name) if recording => format!("Recording into “{name}” — click or press R to stop"),
-        Some(name) => format!("Record what you play on the keyboard into “{name}” (R)"),
+        Some(name) if recording => format!("Recording into “{name}” — click to stop"),
+        Some(name) => format!("Record what you play on the keyboard into “{name}”"),
         None => "Select a track first, then record into it".to_string(),
     };
     if ui

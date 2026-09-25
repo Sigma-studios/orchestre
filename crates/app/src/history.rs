@@ -2,17 +2,17 @@ use orchestre_core::Project;
 
 const MAX_STEPS: usize = 200;
 
-/// Snapshot-based undo/redo. Projects are small (notes are a few bytes
-/// each), so storing whole copies keeps this simple and robust.
-pub struct History {
+/// Snapshot-based undo/redo. Projects and sounds are small (notes are a
+/// few bytes each), so storing whole copies keeps this simple and robust.
+pub struct History<T = Project> {
     /// The last committed state.
-    stable: Project,
-    undo: Vec<Project>,
-    redo: Vec<Project>,
+    stable: T,
+    undo: Vec<T>,
+    redo: Vec<T>,
 }
 
-impl History {
-    pub fn new(project: &Project) -> Self {
+impl<T: Clone + PartialEq> History<T> {
+    pub fn new(project: &T) -> Self {
         History {
             stable: project.clone(),
             undo: Vec::new(),
@@ -21,7 +21,7 @@ impl History {
     }
 
     /// Record `project` as a new step if it differs from the last one.
-    pub fn commit(&mut self, project: &Project) {
+    pub fn commit(&mut self, project: &T) {
         if *project == self.stable {
             return;
         }
@@ -35,7 +35,7 @@ impl History {
 
     /// Returns the project to restore. `current` is committed first so that
     /// uncommitted edits are not lost to redo.
-    pub fn undo(&mut self, current: &Project) -> Option<Project> {
+    pub fn undo(&mut self, current: &T) -> Option<T> {
         self.commit(current);
         let prev = self.undo.pop()?;
         let cur = std::mem::replace(&mut self.stable, prev.clone());
@@ -43,7 +43,7 @@ impl History {
         Some(prev)
     }
 
-    pub fn redo(&mut self) -> Option<Project> {
+    pub fn redo(&mut self) -> Option<T> {
         let next = self.redo.pop()?;
         let cur = std::mem::replace(&mut self.stable, next.clone());
         self.undo.push(cur);

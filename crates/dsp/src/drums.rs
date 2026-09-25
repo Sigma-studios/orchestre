@@ -102,6 +102,10 @@ impl Voice {
         self.f1
             .set(f1.0 * if f1.0 > 0.0 { tune.sqrt() } else { 1.0 }, f1.1, sr);
         self.f2.set(f2.0, f2.1, sr);
+        if piece == DrumPiece::Cowbell {
+            // The 808 cowbell's band-pass: ~850 Hz, Q ~4.25 (Werner et al.).
+            self.f1.set_q(850.0 * tune.sqrt(), 4.25, sr);
+        }
         self.pan = pan_gains(pan);
         self.tune = tune;
         self.punch = p.punch;
@@ -163,13 +167,14 @@ impl Voice {
                 ((a + b) * 0.5 + n) * ex(t, self.decay)
             }
             DrumPiece::ClosedHat | DrumPiece::OpenHat => {
-                let m = self.metal(sr, 1.7 * tune.sqrt());
+                // The TR-808's six oscillators, unscaled (Werner, Abel & Smith).
+                let m = self.metal(sr, tune.sqrt());
                 let n = self.rng.noise() * 0.4;
                 let s = self.f2.band(self.f1.high(m + n));
                 s * 2.2 * ex(t, self.decay) * self.choke
             }
             DrumPiece::Crash => {
-                let m = self.metal(sr, 2.3 * tune.sqrt());
+                let m = self.metal(sr, tune.sqrt());
                 let n = self.rng.noise() * 0.8;
                 let s = self.f1.high(m + n);
                 (s + self.f2.band(s)) * 0.7 * ex(t, self.decay) * (1.0 - ex(t, 0.002))
@@ -191,7 +196,8 @@ impl Voice {
                 self.phase2 = (self.phase2 + 800.0 * tune / sr).fract();
                 let sq = |ph: f32| if ph < 0.5 { 1.0 } else { -1.0 };
                 let s = self.f1.band((sq(self.phase) + sq(self.phase2)) * 0.5);
-                s * 1.1 * (0.6 * ex(t, 0.015) + 0.4 * ex(t, self.decay))
+                // The narrow band-pass rings loud: level it with the kit.
+                s * 0.36 * (0.6 * ex(t, 0.015) + 0.4 * ex(t, self.decay))
             }
             DrumPiece::Tambourine => {
                 let m = self.metal(sr, 4.0);
@@ -214,9 +220,10 @@ impl Voice {
             }
             DrumPiece::HighConga | DrumPiece::LowConga | DrumPiece::Bongo => {
                 let base = match self.piece {
-                    DrumPiece::HighConga => 330.0,
-                    DrumPiece::LowConga => 220.0,
-                    _ => 420.0,
+                    // TR-808 service notes: conga low 185, mid 280, high 400 Hz.
+                    DrumPiece::HighConga => 280.0,
+                    DrumPiece::LowConga => 185.0,
+                    _ => 400.0,
                 } * tune;
                 let f = base * (1.0 + 0.15 * ex(t, 0.02));
                 let body = self.tone(f, sr) * ex(t, self.decay);

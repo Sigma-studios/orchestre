@@ -38,6 +38,35 @@ pub struct EPianoEngine {
     trem: f32,
 }
 
+/// Ring time (T60) of a tine, from Shear's measurements of a 1974 Rhodes
+/// Mark I (Q at E♭2..E♭6 converted to T60): long in the bass, flat through
+/// the middle, short at the top. One instrument; interpolated in between.
+fn ring_time(pitch: f32) -> f32 {
+    const MEASURED: [(f32, f32); 5] = [
+        (39.0, 27.0),
+        (51.0, 10.0),
+        (63.0, 11.0),
+        (75.0, 7.7),
+        (87.0, 3.1),
+    ];
+    let (first, last) = (MEASURED[0], MEASURED[MEASURED.len() - 1]);
+    if pitch <= first.0 {
+        return first.1;
+    }
+    if pitch >= last.0 {
+        // Past E♭6, keep shortening at the same rate.
+        let slope = (last.1 / MEASURED[3].1).ln() / 12.0;
+        return (last.1 * (slope * (pitch - last.0)).exp()).max(0.8);
+    }
+    let i = MEASURED
+        .iter()
+        .position(|m| m.0 > pitch)
+        .unwrap_or(MEASURED.len() - 1);
+    let (a, b) = (MEASURED[i - 1], MEASURED[i]);
+    let t = (pitch - a.0) / (b.0 - a.0);
+    a.1 * (b.1 / a.1).powf(t)
+}
+
 impl EPianoEngine {
     pub fn new(params: EPianoParams, sr: f32) -> Self {
         EPianoEngine {
@@ -73,7 +102,7 @@ impl EPianoEngine {
             .powf(-(pitch as f32 - 60.0) / 30.0)
             .clamp(0.35, 1.6);
         let bark = p.tone * (0.4 + 0.6 * vel) * register;
-        let ring = (3.5 * (2.0f32).powf(-(pitch as f32 - 60.0) / 24.0)).clamp(0.6, 7.0) * p.decay;
+        let ring = ring_time(pitch as f32) * p.decay;
         self.voices[idx] = Voice {
             active: true,
             note: pitch,

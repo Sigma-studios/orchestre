@@ -4,6 +4,8 @@ use crate::filter::Svf;
 use crate::util::{Rng, TAU, decay_coef, midi_to_hz, pan_gains};
 
 const MAX_VOICES: usize = 24;
+/// The lowest key without a damper.
+const UNDAMPED: u8 = 91;
 const HARMONICS: usize = 12;
 /// The lowest partials also get a slightly detuned second "string".
 const DOUBLED: usize = 3;
@@ -47,11 +49,15 @@ impl Voice {
     fn start(&mut self, p: &PianoParams, sr: f32, pitch: u8, vel: f32, off_at: f64, age: u64) {
         let f0 = midi_to_hz(pitch as f32);
         let rel = (pitch as f32 - 60.0) / 12.0;
-        // Low strings ring much longer than high ones.
+        // Low strings ring much longer than high ones. Anchored on
+        // Weinreich's measurement at E♭4: prompt sound ~8 dB/s (T60 7.5 s),
+        // aftersound under a quarter of that rate (T60 30 s and more).
         let base_decay =
-            (7.0 * (2.0f32).powf(-(pitch as f32 - 36.0) / 20.0)).clamp(0.6, 12.0) * p.decay;
-        // Stiffer (more inharmonic) strings in the treble.
-        let inharm = 0.00012 * (2.0f32).powf(rel * 0.8);
+            (30.0 * (2.0f32).powf(-(pitch as f32 - 63.0) / 20.0)).clamp(1.5, 60.0) * p.decay;
+        // Stiffer (more inharmonic) strings in the treble: the treble line
+        // from Rigaud, David & Daudet (JASA 2013), B = exp(0.0926·m − 13.64).
+        // (The bass rise varies too much between pianos to model here.)
+        let inharm = (0.0926 * pitch as f32 - 13.64).exp();
         let tilt = 1.9 - p.brightness * 1.0 - vel * 0.5;
         let vel_gain = 0.15 + 0.85 * vel * vel;
 
@@ -60,10 +66,10 @@ impl Voice {
             let (n, detune) = if i < HARMONICS {
                 (i + 1, 1.0)
             } else {
-                (
-                    i - HARMONICS + 1,
-                    1.0 + (0.0008 + p.detune * 0.004) * if i % 2 == 0 { 1.0 } else { -1.0 },
-                )
+                // The second string of the unison, slightly sharp: all its
+                // partials move together. Listeners prefer 1–2 cents
+                // (Kirk 1959).
+                (i - HARMONICS + 1, 1.0 + 0.0006 + p.detune * 0.003)
             };
             let nf = n as f32;
             let f = nf * f0 * (1.0 + inharm * nf * nf).sqrt() * detune;
@@ -205,7 +211,8 @@ impl PianoEngine {
 
     fn release(v: &mut Voice, pedal: bool) {
         v.off_at = f64::INFINITY;
-        if !pedal {
+        // The top 18 keys (G6 and up) have no dampers.
+        if !pedal && v.note < UNDAMPED {
             v.released = true;
         }
     }
@@ -240,7 +247,8 @@ impl PianoEngine {
     }
 
     pub fn render(&mut self, l: &mut [f32], r: &mut [f32]) {
-        let gain = self.params.gain * 0.45;
+        // Notes now sustain as long as measured: keep the attack as loud as before.
+        let gain = self.params.gain * 0.36;
         for v in self.voices.iter_mut().filter(|v| v.active) {
             v.render(gain, l, r);
         }

@@ -163,10 +163,17 @@ pub fn handle(app: &mut OrchestreApp, ctx: &egui::Context) {
     if ctx.egui_wants_keyboard_input()
         || app.key_prompt.is_some()
         || app.confirm_delete_track.is_some()
+        || app.sfx.replace.is_some()
+        || app.sfx.action.is_some()
+        || app.sfx.quitting
     {
         return;
     }
     let events = ctx.input(|i| i.events.clone());
+    if app.mode == crate::sfx::Mode::Sounds {
+        sound_keys(app, &events);
+        return;
+    }
     for ev in events {
         match ev {
             Event::Copy => copy(app, ctx, false),
@@ -224,7 +231,6 @@ fn command_key(app: &mut OrchestreApp, ctx: &egui::Context, key: Key, shift: boo
 fn plain_key(app: &mut OrchestreApp, key: Key, shift: bool, alt: bool) {
     match key {
         Key::Space => app.toggle_play(),
-        Key::R => app.toggle_record(),
         Key::Enter | Key::Home => app.seek(0.0),
         Key::Escape => {
             if app.selection.is_empty() {
@@ -296,6 +302,80 @@ fn piano_key_event(app: &mut OrchestreApp, key: Key, semi: i32, pressed: bool) {
     } else if let Some((t, p)) = app.held_keys.remove(&key) {
         app.send(Cmd::LiveNoteOff { track: t, pitch: p });
         app.record_note_off(Source::Key(key));
+    }
+}
+
+/// Keys in sound effects mode.
+fn sound_keys(app: &mut OrchestreApp, events: &[Event]) {
+    for ev in events {
+        let &Event::Key {
+            key,
+            pressed: true,
+            repeat,
+            modifiers,
+            ..
+        } = ev
+        else {
+            continue;
+        };
+        if modifiers.command {
+            match key {
+                Key::Z if modifiers.shift => app.redo_sound(),
+                Key::Z => app.undo_sound(),
+                Key::Y => app.redo_sound(),
+                Key::S if modifiers.shift => {
+                    crate::io::save_sound_as(app);
+                }
+                Key::S => {
+                    crate::io::save_sound(app);
+                }
+                Key::O => crate::io::open_sound(app),
+                Key::D => {
+                    if let Some(id) = app.sfx.selected {
+                        app.sfx.duplicate_layer(id);
+                    }
+                }
+                _ => {}
+            }
+            continue;
+        }
+        const INTENSITY_KEYS: [Key; 9] = [
+            Key::Num1,
+            Key::Num2,
+            Key::Num3,
+            Key::Num4,
+            Key::Num5,
+            Key::Num6,
+            Key::Num7,
+            Key::Num8,
+            Key::Num9,
+        ];
+        if let Some(i) = INTENSITY_KEYS.iter().position(|&k| k == key) {
+            // 5 plays it as designed; 1 is soft, 9 is hard.
+            if !repeat {
+                app.play_sound_at(0.2 * (i + 1) as f32);
+            }
+            continue;
+        }
+        match key {
+            Key::Space | Key::Enter if !repeat => app.play_sound(),
+            Key::Escape => app.sfx.selected = None,
+            Key::Delete | Key::Backspace => {
+                if let Some(id) = app.sfx.selected {
+                    app.sfx.delete_layer(id);
+                    app.notify("Layer deleted (Undo brings it back)");
+                }
+            }
+            Key::ArrowLeft | Key::ArrowRight => {
+                let step = if modifiers.alt { 0.001 } else { 0.01 };
+                let dt = if key == Key::ArrowLeft { -step } else { step };
+                if let Some(l) = app.sfx.selected.and_then(|id| app.sfx.sound.layer_mut(id)) {
+                    l.start = (l.start + dt).max(0.0);
+                    app.sfx.touch();
+                }
+            }
+            _ => {}
+        }
     }
 }
 
