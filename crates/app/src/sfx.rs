@@ -337,8 +337,15 @@ pub struct SfxEditor {
     pub action: Option<FileAction>,
     /// Start times (app clock) and lengths of recent plays, for playheads.
     pub plays: Vec<(f64, f32)>,
-    /// The looping sound playing in the editor, as it was when it started.
+    /// The looping sound playing in the editor, as it now plays.
     pub looping: Option<Sound>,
+    /// The version of the sound the last one-shot play started with.
+    heard: Option<Sound>,
+    /// App clock time a playing loop last took on an edit.
+    last_swap: f64,
+    /// A drag is changing a one-shot sound: it replays until it has been
+    /// heard as it was left.
+    auditioning: bool,
     pub changed: bool,
 }
 
@@ -370,6 +377,9 @@ impl SfxEditor {
             action: None,
             plays: Vec::new(),
             looping: None,
+            heard: None,
+            last_swap: f64::NEG_INFINITY,
+            auditioning: false,
             changed: false,
         }
     }
@@ -576,6 +586,10 @@ pub fn file_stem(name: &str) -> String {
     }
 }
 
+/// Seconds between a playing loop taking on edits during a drag: often enough
+/// to follow a slider, not so often the crossfades pile up.
+const SWAP_EVERY: f64 = 0.04;
+
 /// Pointer must rest this long on a preset before it plays.
 const PREVIEW_DELAY: f64 = 0.15;
 
@@ -621,6 +635,7 @@ impl OrchestreApp {
             self.sfx.looping = Some(sound.clone());
         } else {
             self.sfx.plays.push((self.now, sound.length()));
+            self.sfx.heard = Some(sound.clone());
         }
         self.send(Cmd::PlaySound {
             sound: Box::new(sound),
@@ -720,18 +735,7 @@ impl OrchestreApp {
             lib.rescan_if_due(now);
         }
 
-        // A loop keeps playing while you edit: restart it with the edits
-        // once a change is finished.
-        if let Some(playing) = &self.sfx.looping
-            && *playing != self.sfx.sound
-            && !pointer_down
-        {
-            self.send(Cmd::StopSounds);
-            self.sfx.looping = None;
-            if self.sfx.sound.looping != Looping::Once && !self.sfx.sound.layers.is_empty() {
-                self.play_sound();
-            }
-        }
+        self.hear_edits(pointer_down);
 
         self.sfx
             .plays
@@ -758,6 +762,49 @@ impl OrchestreApp {
         }
         #[cfg(target_arch = "wasm32")]
         let _ = typing;
+    }
+
+    /// Edits are heard as they are made. A loop that is playing takes each
+    /// one on where it has got to, without starting over; a one-shot plays
+    /// again, back to back, for as long as a drag keeps changing it, and
+    /// once more as it was let go.
+    fn hear_edits(&mut self, pointer_down: bool) {
+        let now = self.now;
+        let sound = &self.sfx.sound;
+        let playable = !sound.layers.is_empty();
+
+        if let Some(playing) = &self.sfx.looping
+            && playing != sound
+        {
+            if sound.looping == Looping::Once || !playable {
+                self.send(Cmd::StopSounds);
+                self.sfx.looping = None;
+            } else if !pointer_down || now - self.sfx.last_swap >= SWAP_EVERY {
+                self.sfx.last_swap = now;
+                self.sfx.looping = Some(sound.clone());
+                self.send(Cmd::SwapSound(Box::new(sound.clone())));
+            }
+            return;
+        }
+
+        if self.sfx.looping.is_some() || sound.looping != Looping::Once || !playable {
+            self.sfx.auditioning = false;
+            return;
+        }
+        if pointer_down && self.sfx.changed {
+            self.sfx.auditioning = true;
+        }
+        let unheard = self.sfx.heard.as_ref() != Some(sound);
+        let busy = self
+            .sfx
+            .plays
+            .iter()
+            .any(|&(at, len)| now < at + len as f64);
+        if self.sfx.auditioning && unheard && !busy {
+            self.play_sound();
+        } else if !pointer_down && !unheard {
+            self.sfx.auditioning = false;
+        }
     }
 
     pub fn sounds_animating(&self) -> bool {

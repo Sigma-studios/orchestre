@@ -249,6 +249,19 @@ impl Engine {
             Cmd::StopSounds => self.sounds.iter_mut().for_each(SfxVoice::stop),
             Cmd::ReleaseSounds => self.sounds.iter_mut().for_each(SfxVoice::release),
             Cmd::SoundLive(o) => self.sounds.iter_mut().for_each(|s| s.set_live(&o)),
+            Cmd::SwapSound(sound) => {
+                let mut fresh = Vec::new();
+                for voice in self.sounds.iter_mut().filter(|v| v.swappable()) {
+                    fresh.push(voice.swapped(&sound));
+                    voice.cross_fade_out();
+                }
+                for voice in fresh {
+                    if self.sounds.len() >= MAX_SOUNDS {
+                        self.sounds.remove(0);
+                    }
+                    self.sounds.push(voice);
+                }
+            }
             Cmd::LiveNoteOff { track, pitch } => {
                 if let Some(t) = self.tracks.iter_mut().find(|t| t.id == track) {
                     t.inst.live_off(pitch);

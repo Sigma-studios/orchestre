@@ -347,3 +347,48 @@ fn engine_releases_looping_sounds() {
     }
     assert!(peak(&l) < 1e-3, "released: {}", peak(&l));
 }
+
+#[test]
+fn an_edited_loop_carries_on_rather_than_starting_over() {
+    use orchestre_core::sfx::{PlayOpts, presets};
+    let rms = |b: &[f32]| (b.iter().map(|x| x * x).sum::<f32>() / b.len() as f32).sqrt();
+    let mut e = Engine::new(SR as f32);
+    let wind = presets::find("Wind").unwrap().sound();
+    e.handle(Cmd::PlaySound {
+        sound: Box::new(wind.clone()),
+        opts: PlayOpts::seeded(3),
+    });
+    // 10 ms blocks: a second in, well past the fade-in.
+    let (mut l, mut r) = (vec![0.0f32; 441], vec![0.0f32; 441]);
+    let mut before = 0.0;
+    for _ in 0..100 {
+        e.process(&mut l, &mut r);
+        before = rms(&l);
+    }
+    assert!(before > 0.005, "playing: {before}");
+
+    let louder = orchestre_core::sfx::Sound {
+        volume: (wind.volume * 2.0).min(4.0),
+        ..wind.clone()
+    };
+    e.handle(Cmd::SwapSound(Box::new(louder)));
+    let mut levels = Vec::new();
+    for _ in 0..30 {
+        e.process(&mut l, &mut r);
+        check_clean(&l);
+        levels.push(rms(&l));
+    }
+    // A restart would come back in through its fade-in: a dip to near nothing.
+    let lowest = levels.iter().copied().fold(f32::MAX, f32::min);
+    assert!(lowest > before * 0.5, "dipped to {lowest} from {before}");
+    // And the edit is heard: twice the volume, give or take the wind's gusts.
+    let after = levels[20..].iter().sum::<f32>() / 10.0;
+    assert!(after > before * 1.4, "{after} vs {before}");
+
+    // One sound is left playing, not two: a release silences everything.
+    e.handle(Cmd::ReleaseSounds);
+    for _ in 0..600 {
+        e.process(&mut l, &mut r);
+    }
+    assert!(peak(&l) < 1e-3, "released: {}", peak(&l));
+}

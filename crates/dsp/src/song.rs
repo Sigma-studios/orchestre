@@ -152,6 +152,9 @@ pub enum Cmd {
     /// Change intensity, pitch and speed of every sound effect playing
     /// (the seed and volume are ignored).
     SoundLive(PlayOpts),
+    /// An edited version of the sound: every loop still playing carries on
+    /// with it, from where it has got to, crossfaded.
+    SwapSound(Box<Sound>),
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
