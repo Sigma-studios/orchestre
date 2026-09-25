@@ -75,6 +75,10 @@ pub enum Drag {
         current: (f64, f32),
         base: HashSet<Id>,
     },
+    /// Drawing a new note: dragging sets its length.
+    Draw { id: Id, start: Tick },
+    /// Painting drum hits along a row, one per grid step.
+    Paint { pitch: u8 },
 }
 
 pub struct OrchestreApp {

@@ -200,7 +200,7 @@ pub fn show(app: &mut OrchestreApp, ui: &mut Ui, rect: Rect) {
         p.text(
             grid.center(),
             Align2::CENTER_CENTER,
-            "Click anywhere in the grid to add a note",
+            "Click to add a note, or press and drag to set its length",
             FontId::proportional(16.0),
             Color32::from_white_alpha(70),
         );
@@ -451,7 +451,8 @@ fn handle_mouse(
     rows: &Rows,
     track: &Track,
 ) {
-    let (shift, alt) = ui.input(|i| (i.modifiers.shift, i.modifiers.alt));
+    let (shift, alt, command) =
+        ui.input(|i| (i.modifiers.shift, i.modifiers.alt, i.modifiers.command));
     let step = app.project.grid_ticks();
     let left = geo.grid.left();
 
@@ -486,26 +487,28 @@ fn handle_mouse(
                 .copied()
                 .collect::<Vec<_>>()
         };
-        app.drag = Some(match hit_test(app, geo, rows, track, origin) {
+        app.drag = match hit_test(app, geo, rows, track, origin) {
             Some(Hit::Edge(id)) => {
                 let orig = grab_note(app, id);
-                Drag::Resize {
+                Some(Drag::Resize {
                     grab: id,
                     anchor_tick: tick,
                     orig,
-                }
+                })
             }
             Some(Hit::Body(id)) => {
                 let orig = grab_note(app, id);
-                Drag::Move {
+                Some(Drag::Move {
                     grab: id,
                     anchor_tick: tick,
                     anchor_row: geo.row_at(origin.y),
                     orig,
                     last_pitch: track.note(id).map(|n| n.pitch),
-                }
+                })
             }
-            None => {
+            // Shift or Ctrl/Cmd + drag on empty space: select an area
+            // (Shift adds to the current selection).
+            None if shift || command => {
                 let base = if shift {
                     app.selection.clone()
                 } else {
@@ -513,13 +516,29 @@ fn handle_mouse(
                 };
                 app.selection = base.clone();
                 let at = (tick, geo.row_at_f(origin.y));
-                Drag::Select {
+                Some(Drag::Select {
                     origin: at,
                     current: at,
                     base,
-                }
+                })
             }
-        });
+            // Plain drag on empty space: draw a note (or paint drum hits).
+            None => {
+                app.selection.clear();
+                let len = if rows.drums {
+                    step
+                } else {
+                    step.min(app.note_len)
+                };
+                add_note_at(app, geo, rows, track, origin, len).map(|(id, start, pitch)| {
+                    if rows.drums {
+                        Drag::Paint { pitch }
+                    } else {
+                        Drag::Draw { id, start }
+                    }
+                })
+            }
+        };
     }
 
     if resp.dragged()
@@ -590,6 +609,37 @@ fn handle_mouse(
                     orig,
                 });
             }
+            Some(Drag::Draw { id, start }) => {
+                let len = drawn_length(start, tick, step, alt);
+                with_track(app, |t| {
+                    if let Some(n) = t.notes.iter_mut().find(|n| n.id == id) {
+                        n.len = len;
+                    }
+                });
+                // The next plain click reuses this length.
+                app.note_len = len;
+                app.drag = Some(Drag::Draw { id, start });
+            }
+            Some(Drag::Paint { pitch }) => {
+                let at = snap_floor(tick.max(0.0) as Tick, step);
+                if !app
+                    .selected_track()
+                    .is_some_and(|t| t.notes.iter().any(|n| n.start == at && n.pitch == pitch))
+                {
+                    let id = app.project.new_id();
+                    with_track(app, |t| {
+                        t.notes.push(Note {
+                            id,
+                            start: at,
+                            len: step,
+                            pitch,
+                            vel: 0.8,
+                        })
+                    });
+                    app.audition(track.id, pitch);
+                }
+                app.drag = Some(Drag::Paint { pitch });
+            }
             Some(Drag::Select { origin, base, .. }) => {
                 let (t0, t1) = (origin.0.min(tick), origin.0.max(tick));
                 let (r0, r1) = (
@@ -652,7 +702,10 @@ fn handle_mouse(
                 }
             }
             None if !app.selection.is_empty() && !shift => app.selection.clear(),
-            None => add_note_at(app, geo, rows, track, pos),
+            None => {
+                let len = if rows.drums { step } else { app.note_len };
+                add_note_at(app, geo, rows, track, pos, len);
+            }
         }
     }
 
@@ -665,22 +718,26 @@ fn handle_mouse(
     }
 }
 
-fn add_note_at(app: &mut OrchestreApp, geo: &Geo, rows: &Rows, track: &Track, pos: Pos2) {
-    let Some(&pitch) = usize::try_from(geo.row_at(pos.y))
+/// Add a note under `pos` (snapped to the grid). Returns (id, start, pitch).
+fn add_note_at(
+    app: &mut OrchestreApp,
+    geo: &Geo,
+    rows: &Rows,
+    track: &Track,
+    pos: Pos2,
+    len: Tick,
+) -> Option<(Id, Tick, u8)> {
+    let &pitch = usize::try_from(geo.row_at(pos.y))
         .ok()
-        .and_then(|r| rows.pitches.get(r))
-    else {
-        return;
-    };
+        .and_then(|r| rows.pitches.get(r))?;
     let step = app.project.grid_ticks();
     let start = snap_floor(app.view.x_to_tick(geo.grid.left(), pos.x) as Tick, step).max(0);
-    let len = if rows.drums { step } else { app.note_len };
     if track
         .notes
         .iter()
         .any(|n| n.start == start && n.pitch == pitch)
     {
-        return;
+        return None;
     }
     let id = app.project.new_id();
     with_track(app, |t| {
@@ -693,4 +750,38 @@ fn add_note_at(app: &mut OrchestreApp, geo: &Geo, rows: &Rows, track: &Track, po
         })
     });
     app.audition(track.id, pitch);
+    Some((id, start, pitch))
+}
+
+/// Length of a note being drawn from `start` to the pointer at `tick`:
+/// snapped to the grid (at least one step), or free with Alt held.
+fn drawn_length(start: Tick, tick: f64, step: Tick, free: bool) -> Tick {
+    if free {
+        (tick.round() as Tick - start).max(PPQ / 32)
+    } else {
+        (snap_round(tick.round() as Tick, step) - start).max(step)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn drawn_length_snaps_and_never_collapses() {
+        let step = PPQ / 4;
+        assert_eq!(drawn_length(0, 700.0, step, false), 720);
+        assert_eq!(
+            drawn_length(960, 1000.0, step, false),
+            step,
+            "at least one step"
+        );
+        assert_eq!(
+            drawn_length(960, 500.0, step, false),
+            step,
+            "dragging backwards"
+        );
+        assert_eq!(drawn_length(0, 700.0, step, true), 700);
+        assert_eq!(drawn_length(0, 3.0, step, true), PPQ / 32);
+    }
 }

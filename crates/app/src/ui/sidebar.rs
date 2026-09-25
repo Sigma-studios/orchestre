@@ -491,6 +491,11 @@ fn mix_ui(ui: &mut Ui, t: &mut Track) {
 fn help(ui: &mut Ui, drums: bool) {
     let lines: &[&str] = &[
         "Click: add a note",
+        if drums {
+            "Drag on empty space: paint hits"
+        } else {
+            "Drag on empty space: draw a note's length"
+        },
         "Drag a note: move it",
         if drums {
             "Each row is one drum sound"
@@ -498,7 +503,7 @@ fn help(ui: &mut Ui, drums: bool) {
             "Drag the right edge: change length"
         },
         "Right-click a note: delete",
-        "Drag on empty space: select",
+        "Shift or Ctrl/Cmd + drag: select an area",
         "Ctrl/Cmd + C / V / D: copy, paste, duplicate",
         "Arrows: nudge selection · Alt: no snapping",
         if drums {

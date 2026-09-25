@@ -42,10 +42,11 @@ On the web the engine runs in an AudioWorklet (built by a Trunk pre-build hook i
 
 - Click a track at the bottom to open its notes above it. Click it again, or press Esc, to close.
 - In the note editor:
-  - click to add a note;
+  - click to add a note (same length as the last one);
+  - press and drag on empty space to draw a note and set its length (on drum tracks, to paint hits along the row);
   - drag a note to move it, or drag its right edge to change its length;
   - right-click a note to delete it;
-  - drag on empty space to select.
+  - Shift+drag (adds to the selection) or Ctrl/Cmd+drag on empty space to select an area.
 - Ctrl/Cmd + C / X / V / D: copy, cut, paste (at the mouse), duplicate. Arrows nudge the selection; Alt disables snapping.
 - **Key** (sidebar): locks a melodic track to a key and shows only in-key rows. If existing notes don't fit, you're asked whether to delete them or move them to the nearest in-key note.
 - Space: play/stop. Ctrl/Cmd+Z: undo; Ctrl/Cmd+Shift+Z: redo.
