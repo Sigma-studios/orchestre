@@ -163,6 +163,8 @@ fn lane(app: &mut OrchestreApp, ui: &mut Ui, id: u64, index: usize) {
     );
     hui.add_space(2.0);
     hui.vertical(|ui| {
+        // Leave room for the buttons on the right; long names get "…".
+        ui.set_max_width(HEADER_W - 190.0);
         ui.add_space(3.0);
         let rec = app.rec.active && selected;
         let name = if rec {
@@ -175,16 +177,43 @@ fn lane(app: &mut OrchestreApp, ui: &mut Ui, id: u64, index: usize) {
         } else {
             Color32::WHITE
         };
-        ui.label(RichText::new(name).strong().color(color));
-        ui.label(
-            RichText::new(track.instrument.label())
-                .size(11.0)
-                .color(theme::TEXT_DIM),
+        ui.add(egui::Label::new(RichText::new(name).strong().color(color)).truncate());
+        ui.add(
+            egui::Label::new(
+                RichText::new(track.instrument.label())
+                    .size(11.0)
+                    .color(theme::TEXT_DIM),
+            )
+            .truncate(),
         );
     });
     hui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
         let level = app.levels.get(&id).copied().unwrap_or(0.0);
         crate::ui::transport::meter(ui, level, vec2(6.0, LANE_H - 16.0));
+        let count = app.project.tracks.len();
+        let small = |text: &str| {
+            egui::Button::new(RichText::new(text).size(12.0)).min_size(vec2(22.0, 22.0))
+        };
+        if ui.add(small("🗑")).on_hover_text("Delete track").clicked() {
+            app.confirm_delete_track = Some(id);
+        }
+        if ui
+            .add_enabled(index + 1 < count, small("⏷"))
+            .on_hover_text("Move down")
+            .clicked()
+        {
+            app.project.tracks.swap(index, index + 1);
+            app.touch();
+        }
+        if ui
+            .add_enabled(index > 0, small("⏶"))
+            .on_hover_text("Move up")
+            .clicked()
+        {
+            app.project.tracks.swap(index, index - 1);
+            app.touch();
+        }
+        ui.add_space(4.0);
         let mut solo = track.solo;
         if ui
             .toggle_value(&mut solo, RichText::new("S").strong())
