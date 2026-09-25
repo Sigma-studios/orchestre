@@ -1,5 +1,5 @@
 use crate::filter::OnePole;
-use crate::util::flush;
+use crate::util::{TAU, flush};
 
 struct Comb {
     buf: Vec<f32>,
@@ -150,5 +150,52 @@ impl Delay {
         self.buf[1][self.pos] = flush(self.damp[0].low(dl) * self.feedback);
         self.pos = (self.pos + 1) % len;
         (dl, dr)
+    }
+}
+
+/// Stereo chorus: two slowly modulated short delays, in quadrature.
+pub struct Chorus {
+    buf: [Vec<f32>; 2],
+    pos: usize,
+    phase: f32,
+    sr: f32,
+}
+
+impl Chorus {
+    pub fn new(sr: f32) -> Self {
+        let len = (sr * 0.04) as usize + 2;
+        Chorus {
+            buf: [vec![0.0; len], vec![0.0; len]],
+            pos: 0,
+            phase: 0.0,
+            sr,
+        }
+    }
+
+    /// Process a block in place; `amount` 0..1.
+    pub fn process(&mut self, l: &mut [f32], r: &mut [f32], amount: f32) {
+        let len = self.buf[0].len();
+        let (wet, dry) = (amount * 0.6, 1.0 - amount * 0.25);
+        let base = 0.012 * self.sr;
+        let depth = 0.004 * self.sr;
+        for i in 0..l.len() {
+            self.buf[0][self.pos] = l[i];
+            self.buf[1][self.pos] = r[i];
+            let mut out = [0.0f32; 2];
+            for (ch, o) in out.iter_mut().enumerate() {
+                let lfo = (self.phase * TAU + ch as f32 * std::f32::consts::FRAC_PI_2).sin();
+                let d = base + depth * lfo;
+                let read = self.pos as f32 - d + len as f32;
+                let i0 = read.floor() as usize % len;
+                let frac = read.fract();
+                let b = &self.buf[ch];
+                *o = b[i0] * (1.0 - frac) + b[(i0 + 1) % len] * frac;
+            }
+            // Cross-feed the wet signal for width.
+            l[i] = l[i] * dry + out[1] * wet;
+            r[i] = r[i] * dry + out[0] * wet;
+            self.pos = (self.pos + 1) % len;
+            self.phase = (self.phase + 0.8 / self.sr).fract();
+        }
     }
 }

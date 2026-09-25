@@ -59,6 +59,28 @@ fn keyboard_semitone(key: Key, physical_key: Option<Key>) -> Option<i32> {
 /// one drum per home-row key, in order.
 pub const HOME_ROW: [i32; 10] = [0, 2, 4, 5, 7, 9, 11, 12, 14, 16];
 
+/// Semitones of the row above (the piano's black keys), left to right.
+/// Drum tracks put the percussion pieces there.
+pub const BLACK_ROW: [i32; 7] = [1, 3, 6, 8, 10, 13, 15];
+
+/// Keyboard semitone position that plays drum row `index`.
+pub fn drum_semitone(index: usize) -> Option<i32> {
+    if index < DrumPiece::KIT_LEN {
+        HOME_ROW.get(index).copied()
+    } else {
+        BLACK_ROW.get(index - DrumPiece::KIT_LEN).copied()
+    }
+}
+
+/// Drum row played by the key at `semi`, if any.
+pub fn drum_at_semitone(semi: i32) -> Option<u8> {
+    let index = match HOME_ROW.iter().position(|&s| s == semi) {
+        Some(i) => i,
+        None => DrumPiece::KIT_LEN + BLACK_ROW.iter().position(|&s| s == semi)?,
+    };
+    (index < DrumPiece::ALL.len()).then_some(index as u8)
+}
+
 /// Keyboard layout, only used to print the right letters on the note
 /// editor's keys (playing always goes by key position).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
@@ -126,7 +148,7 @@ impl KbLayout {
 /// tracks), as printed on the user's keyboard.
 pub fn key_label_for(app: &OrchestreApp, pitch: u8, drums: bool) -> Option<&'static str> {
     let semi = if drums {
-        *HOME_ROW.get(pitch as usize)?
+        drum_semitone(pitch as usize)?
     } else {
         pitch as i32 - (app.octave as i32 + 1) * 12
     };
@@ -254,9 +276,9 @@ fn piano_key_event(app: &mut OrchestreApp, key: Key, semi: i32, pressed: bool) {
     let id = track.id;
     if pressed {
         let pitch = if track.instrument.is_drums() {
-            match HOME_ROW.iter().position(|&s| s == semi) {
-                Some(i) if i < DrumPiece::ALL.len() => i as u8,
-                _ => return,
+            match drum_at_semitone(semi) {
+                Some(i) => i,
+                None => return,
             }
         } else {
             let p = ((app.octave as i32 + 1) * 12 + semi).clamp(0, 127) as u8;
@@ -410,6 +432,28 @@ mod tests {
         for l in KbLayout::ALL {
             assert_eq!(KbLayout::from_label(l.label()), Some(l));
         }
+    }
+
+    #[test]
+    fn every_drum_has_its_own_key() {
+        let mut semis: Vec<i32> = (0..DrumPiece::ALL.len())
+            .map(|i| drum_semitone(i).unwrap())
+            .collect();
+        for (i, &s) in semis.iter().enumerate() {
+            assert_eq!(drum_at_semitone(s), Some(i as u8));
+        }
+        semis.sort();
+        semis.dedup();
+        assert_eq!(semis.len(), DrumPiece::ALL.len(), "two drums share a key");
+        // Percussion sits on the black-key row: W E T Y U O P on QWERTY.
+        let letters: Vec<_> = (DrumPiece::KIT_LEN..DrumPiece::ALL.len())
+            .map(|i| {
+                KbLayout::Qwerty
+                    .key_label(drum_semitone(i).unwrap())
+                    .unwrap()
+            })
+            .collect();
+        assert_eq!(letters, ["W", "E", "T", "Y", "U", "O", "P"]);
     }
 
     #[test]

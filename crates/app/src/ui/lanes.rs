@@ -2,7 +2,7 @@
 //! makes sound. Clicking a lane opens its note editor above.
 
 use egui::{Align2, Color32, FontId, Rect, RichText, Sense, Stroke, Ui, pos2, vec2};
-use orchestre_core::{InstrumentChoice, Track, seconds_to_ticks};
+use orchestre_core::{Category, InstrumentChoice, Track, seconds_to_ticks};
 
 use crate::app::OrchestreApp;
 use crate::theme;
@@ -343,15 +343,48 @@ fn draw_activity(
 
 pub fn add_instrument_menu(app: &mut OrchestreApp, ui: &mut Ui) {
     ui.menu_button(RichText::new("+ Add instrument").strong(), |ui| {
-        ui.set_min_width(260.0);
-        for choice in InstrumentChoice::all() {
-            let text = format!("{}  —  {}", choice.label(), choice.description());
-            if ui.button(text).clicked() {
-                let id = app.project.add_track(choice);
-                app.select_track(Some(id));
-                app.touch();
-                ui.close();
+        ui.set_min_width(190.0);
+        ui.label(
+            RichText::new("Rest on a sound to hear it")
+                .size(11.5)
+                .color(theme::TEXT_DIM),
+        );
+        for cat in Category::ALL {
+            let choices: Vec<InstrumentChoice> = InstrumentChoice::all()
+                .into_iter()
+                .filter(|c| c.category() == cat)
+                .collect();
+            if let [only] = choices[..] {
+                instrument_entry(app, ui, only, cat.label());
+                continue;
             }
+            ui.menu_button(cat.label(), |ui| {
+                ui.set_min_width(300.0);
+                for choice in choices {
+                    instrument_entry(app, ui, choice, choice.label());
+                }
+            });
         }
     });
+}
+
+/// One menu entry: adds the instrument on click, previews it on hover.
+fn instrument_entry(app: &mut OrchestreApp, ui: &mut Ui, choice: InstrumentChoice, label: &str) {
+    let resp = ui.horizontal(|ui| {
+        let resp = ui.button(label);
+        ui.label(
+            RichText::new(choice.description())
+                .size(11.5)
+                .color(theme::TEXT_DIM),
+        );
+        resp
+    });
+    let button = resp.inner;
+    crate::ui::preview::hover(app, &button.union(resp.response), choice);
+    if button.clicked() {
+        let id = app.project.add_track(choice);
+        app.select_track(Some(id));
+        app.touch();
+        ui.close();
+    }
 }

@@ -8,8 +8,8 @@ use crate::theme;
 
 /// Width of everything left of the timeline (sidebar + keyboard in the
 /// editor, track headers in the lanes), so both timelines line up.
-pub const HEADER_W: f32 = 312.0;
-pub const KEYS_W: f32 = 86.0;
+pub const HEADER_W: f32 = 318.0;
+pub const KEYS_W: f32 = 92.0;
 pub const RULER_H: f32 = 22.0;
 
 /// Alternating bar shading plus bar / beat / grid lines.

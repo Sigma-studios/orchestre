@@ -121,6 +121,7 @@ pub struct OrchestreApp {
     /// When the last position report arrived (for extrapolating the playhead).
     pub(crate) position_time: f64,
     pub rec: crate::record::Recorder,
+    pub preview: crate::ui::preview::PreviewState,
 }
 
 impl OrchestreApp {
@@ -204,6 +205,7 @@ impl OrchestreApp {
             now: 0.0,
             position_time: 0.0,
             rec: Default::default(),
+            preview: Default::default(),
         }
     }
 
@@ -424,6 +426,7 @@ impl OrchestreApp {
 
         let animating = self.playing
             || self.rec.counting.is_some()
+            || self.preview.pending()
             || !self.auditions.is_empty()
             || self.toast.is_some()
             || self.levels.values().any(|&l| l > 0.001);
@@ -454,6 +457,13 @@ impl OrchestreApp {
                     45 | 47 => 7,
                     48 | 50 => 8,
                     49 | 57 => 9,
+                    56 => 10,
+                    54 => 11,
+                    69 | 70 | 82 => 12,
+                    75 => 13,
+                    62 | 63 => 14,
+                    64 => 15,
+                    60 | 61 => 16,
                     _ => continue,
                 }
             } else {
@@ -507,6 +517,7 @@ impl eframe::App for OrchestreApp {
             .frame(egui::Frame::central_panel(ui.style()).inner_margin(0.0))
             .show(ui, |ui| crate::ui::editor::show(self, ui));
         crate::ui::dialogs::show(self, &ctx);
+        crate::ui::preview::end_frame(self);
 
         self.sync_audio();
         self.checkpoint(&ctx);

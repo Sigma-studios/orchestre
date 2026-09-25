@@ -78,6 +78,13 @@ impl Voice {
             DrumPiece::MidTom => (0.13 * d, -0.1, (0.0, 0.0), (0.0, 0.0)),
             DrumPiece::HighTom => (0.11 * d, 0.2, (0.0, 0.0), (0.0, 0.0)),
             DrumPiece::Crash => (0.7 * d, -0.25, (5000.0, 0.1), (9000.0, 0.2)),
+            DrumPiece::Cowbell => (0.12 * d, 0.25, (900.0, 0.5), (0.0, 0.0)),
+            DrumPiece::Tambourine => (0.12 * d, -0.3, (7000.0, 0.2), (9500.0, 0.4)),
+            DrumPiece::Shaker => (0.06 * d, 0.35, (6500.0, 0.3), (4000.0, 0.1)),
+            DrumPiece::Claves => (0.025 * d, -0.2, (0.0, 0.0), (0.0, 0.0)),
+            DrumPiece::HighConga => (0.12 * d, 0.3, (2000.0, 0.4), (0.0, 0.0)),
+            DrumPiece::LowConga => (0.16 * d, 0.15, (1600.0, 0.4), (0.0, 0.0)),
+            DrumPiece::Bongo => (0.07 * d, -0.35, (2500.0, 0.4), (0.0, 0.0)),
         };
         self.active = true;
         self.piece = piece;
@@ -178,6 +185,45 @@ impl Voice {
                 let n = self.rng.noise() * ex(t, 0.01) * 0.15;
                 body + n
             }
+            DrumPiece::Cowbell => {
+                // The classic analog recipe: two detuned square waves.
+                self.phase = (self.phase + 540.0 * tune / sr).fract();
+                self.phase2 = (self.phase2 + 800.0 * tune / sr).fract();
+                let sq = |ph: f32| if ph < 0.5 { 1.0 } else { -1.0 };
+                let s = self.f1.band((sq(self.phase) + sq(self.phase2)) * 0.5);
+                s * 1.1 * (0.6 * ex(t, 0.015) + 0.4 * ex(t, self.decay))
+            }
+            DrumPiece::Tambourine => {
+                let m = self.metal(sr, 4.0);
+                let n = self.rng.noise() * 0.6;
+                let s = self.f2.band(self.f1.high(m + n));
+                // Jingles rattle: a fast wobble on the decay.
+                let rattle = 0.75 + 0.25 * (t * 90.0 * TAU).sin();
+                s * 2.5 * ex(t, self.decay) * rattle
+            }
+            DrumPiece::Shaker => {
+                let s = self.f2.high(self.f1.band(self.rng.noise()));
+                // Soft attack: the beads take a moment to hit the shell.
+                s * 2.4 * (1.0 - ex(t, 0.012)) * ex(t, self.decay)
+            }
+            DrumPiece::Claves => {
+                let a = self.tone(2500.0 * tune, sr);
+                self.phase2 = (self.phase2 + 5400.0 * tune / sr).fract();
+                let b = (self.phase2 * TAU).sin();
+                (a + b * 0.3) * ex(t, self.decay)
+            }
+            DrumPiece::HighConga | DrumPiece::LowConga | DrumPiece::Bongo => {
+                let base = match self.piece {
+                    DrumPiece::HighConga => 330.0,
+                    DrumPiece::LowConga => 220.0,
+                    _ => 420.0,
+                } * tune;
+                let f = base * (1.0 + 0.15 * ex(t, 0.02));
+                let body = self.tone(f, sr) * ex(t, self.decay);
+                // Slap of the hand on the skin.
+                let slap = self.f1.band(self.rng.noise()) * ex(t, 0.006) * 1.5;
+                body + slap
+            }
         }
     }
 }
@@ -251,7 +297,7 @@ impl DrumEngine {
                 .iter()
                 .position(|&x| x == v.piece)
                 .unwrap_or(0);
-            let g = p.gain * p.levels[idx] * (0.2 + 0.8 * v.vel) * 0.7;
+            let g = p.gain * p.level(idx) * (0.2 + 0.8 * v.vel) * 0.7;
             let (gl, gr) = (v.pan.0 * g, v.pan.1 * g);
             for i in 0..l.len() {
                 // Short fade at the very end to avoid a click.

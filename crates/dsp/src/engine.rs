@@ -1,9 +1,14 @@
-use orchestre_core::{Id, Instrument, PPQ, Tick};
+use orchestre_core::{Id, Instrument, PPQ, PreviewNote, Tick};
 
+use crate::choir::ChoirEngine;
 use crate::click::Click;
 use crate::drums::DrumEngine;
+use crate::epiano::EPianoEngine;
 use crate::fx::{Delay, Reverb};
+use crate::mallets::MalletEngine;
+use crate::organ::OrganEngine;
 use crate::piano::PianoEngine;
+use crate::pluck::PluckEngine;
 use crate::song::{Cmd, Event, Song, TrackParams};
 use crate::synth::SynthEngine;
 use crate::util::{pan_gains, soft_clip};
@@ -16,6 +21,11 @@ enum Inst {
     Synth(Box<SynthEngine>),
     Drums(Box<DrumEngine>),
     Piano(Box<PianoEngine>),
+    EPiano(Box<EPianoEngine>),
+    Organ(Box<OrganEngine>),
+    Mallets(Box<MalletEngine>),
+    Pluck(Box<PluckEngine>),
+    Choir(Box<ChoirEngine>),
 }
 
 macro_rules! each {
@@ -24,6 +34,11 @@ macro_rules! each {
             Inst::Synth($e) => $body,
             Inst::Drums($e) => $body,
             Inst::Piano($e) => $body,
+            Inst::EPiano($e) => $body,
+            Inst::Organ($e) => $body,
+            Inst::Mallets($e) => $body,
+            Inst::Pluck($e) => $body,
+            Inst::Choir($e) => $body,
         }
     };
 }
@@ -34,6 +49,11 @@ impl Inst {
             Instrument::Synth(p) => Inst::Synth(Box::new(SynthEngine::new(p, sr))),
             Instrument::Drums(p) => Inst::Drums(Box::new(DrumEngine::new(p, sr))),
             Instrument::Piano(p) => Inst::Piano(Box::new(PianoEngine::new(p, sr))),
+            Instrument::EPiano(p) => Inst::EPiano(Box::new(EPianoEngine::new(p, sr))),
+            Instrument::Organ(p) => Inst::Organ(Box::new(OrganEngine::new(p, sr))),
+            Instrument::Mallets(p) => Inst::Mallets(Box::new(MalletEngine::new(p, sr))),
+            Instrument::Pluck(p) => Inst::Pluck(Box::new(PluckEngine::new(p, sr))),
+            Instrument::Choir(p) => Inst::Choir(Box::new(ChoirEngine::new(p, sr))),
         }
     }
 
@@ -43,6 +63,11 @@ impl Inst {
             (Inst::Synth(e), Instrument::Synth(p)) => e.set_params(p),
             (Inst::Drums(e), Instrument::Drums(p)) => e.set_params(p),
             (Inst::Piano(e), Instrument::Piano(p)) => e.set_params(p),
+            (Inst::EPiano(e), Instrument::EPiano(p)) => e.set_params(p),
+            (Inst::Organ(e), Instrument::Organ(p)) => e.set_params(p),
+            (Inst::Mallets(e), Instrument::Mallets(p)) => e.set_params(p),
+            (Inst::Pluck(e), Instrument::Pluck(p)) => e.set_params(p),
+            (Inst::Choir(e), Instrument::Choir(p)) => e.set_params(p),
             _ => return false,
         }
         true
@@ -63,6 +88,16 @@ impl Inst {
     fn render(&mut self, l: &mut [f32], r: &mut [f32]) {
         each!(self, e => e.render(l, r))
     }
+}
+
+/// An instrument playing a short phrase outside the song (menu previews).
+struct Preview {
+    inst: Inst,
+    notes: Vec<PreviewNote>,
+    /// Per note: 0 = waiting, 1 = sounding, 2 = done.
+    state: Vec<u8>,
+    clock: f32,
+    end: f32,
 }
 
 struct TrackState {
@@ -93,6 +128,7 @@ pub struct Engine {
     metronome: bool,
     count_in: Option<CountIn>,
     click: Click,
+    preview: Option<Preview>,
 }
 
 /// Clicks counted before playback starts, in ticks.
@@ -121,6 +157,7 @@ impl Engine {
             metronome: false,
             count_in: None,
             click: Click::new(sample_rate),
+            preview: None,
         }
     }
 
@@ -176,6 +213,14 @@ impl Engine {
                 }
             }
             Cmd::SetMetronome(on) => self.metronome = on,
+            Cmd::Preview { instrument, notes } => self.start_preview(instrument, notes),
+            Cmd::StopPreview => {
+                if let Some(pv) = &mut self.preview {
+                    pv.inst.all_off();
+                    pv.state.iter_mut().for_each(|s| *s = 2);
+                    pv.end = pv.clock + 2.0;
+                }
+            }
             Cmd::CountIn(beats) => {
                 self.playing = false;
                 self.all_off();
@@ -225,6 +270,58 @@ impl Engine {
         for (t, st) in self.tracks.iter_mut().zip(&self.song.tracks) {
             t.cursor = st.notes.partition_point(|n| (n.start as f64) < pos);
             t.drive = st.params.fx.drive;
+        }
+    }
+
+    fn start_preview(&mut self, instrument: Instrument, notes: Vec<PreviewNote>) {
+        let end = notes.iter().map(|n| n.start + n.len).fold(0.0, f32::max) + 3.0;
+        // Reuse the previous preview's instrument if it's the same kind.
+        let inst = match self.preview.take().map(|pv| pv.inst) {
+            Some(mut inst) => {
+                if inst.update(&instrument) {
+                    inst.all_off();
+                    inst
+                } else {
+                    Inst::new(&instrument, self.sr)
+                }
+            }
+            None => Inst::new(&instrument, self.sr),
+        };
+        let state = vec![0; notes.len()];
+        self.preview = Some(Preview {
+            inst,
+            notes,
+            state,
+            clock: 0.0,
+            end,
+        });
+    }
+
+    /// Advance and render the preview phrase, mixed into the given buffers.
+    fn render_preview(&mut self, l: &mut [f32], r: &mut [f32], rev: &mut [f32]) {
+        let Some(pv) = &mut self.preview else { return };
+        for (n, st) in pv.notes.iter().zip(pv.state.iter_mut()) {
+            if *st == 0 && n.start <= pv.clock {
+                pv.inst.note_on(n.pitch, n.vel, f64::INFINITY);
+                *st = 1;
+            }
+            if *st == 1 && n.start + n.len <= pv.clock {
+                pv.inst.live_off(n.pitch);
+                *st = 2;
+            }
+        }
+        let len = l.len();
+        let mut pl = [0.0f32; BLOCK];
+        let mut pr = [0.0f32; BLOCK];
+        pv.inst.render(&mut pl[..len], &mut pr[..len]);
+        for i in 0..len {
+            l[i] += pl[i] * 0.9;
+            r[i] += pr[i] * 0.9;
+            rev[i] += (pl[i] + pr[i]) * 0.12;
+        }
+        pv.clock += len as f32 / self.sr;
+        if pv.clock > pv.end {
+            self.preview = None;
         }
     }
 
@@ -433,6 +530,8 @@ impl Engine {
             }
             t.peak = t.peak.max(peak);
         }
+
+        self.render_preview(&mut out_l[..n], &mut out_r[..n], &mut rev[..n]);
 
         for i in 0..n {
             let (dl, dr) = self.delay.process(del_l[i], del_r[i]);

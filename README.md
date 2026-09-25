@@ -1,6 +1,18 @@
 # Orchestre
 
-A beginner-friendly music maker. Every sound (synths, drums, piano) is synthesized from scratch; no samples. Runs natively and in the browser from one Rust codebase.
+A beginner-friendly music maker. Every sound is synthesized from scratch; no samples. Runs natively and in the browser from one Rust codebase.
+
+**Instruments** (29, grouped in the *Add instrument* menu; rest the pointer on one to hear it):
+
+| Group | Sounds |
+|---|---|
+| Drums & percussion | Kick, snare, clap, rim, hi-hats, toms, crash, cowbell, tambourine, shaker, claves, congas, bongo (3 kit styles) |
+| Keys | Piano, electric piano, jazz / rock / church organ, bell keys |
+| Plucked | Guitar, harp, koto, synth pluck, arp pluck |
+| Mallets | Marimba, vibraphone, xylophone, glockenspiel |
+| Bass | Bass, sub bass, 808 bass, wobble bass, bass guitar |
+| Leads | Lead, chiptune, brass, flute |
+| Pads & choir | Pad, supersaw, strings, choir |
 
 ## Run
 
@@ -37,7 +49,7 @@ On the web the engine runs in an AudioWorklet (built by a Trunk pre-build hook i
 - Ctrl/Cmd + C / X / V / D: copy, cut, paste (at the mouse), duplicate. Arrows nudge the selection; Alt disables snapping.
 - **Key** (sidebar): locks a melodic track to a key and shows only in-key rows. If existing notes don't fit, you're asked whether to delete them or move them to the nearest in-key note.
 - Space: play/stop. Ctrl/Cmd+Z: undo; Ctrl/Cmd+Shift+Z: redo.
-- Your computer keyboard plays the selected track. On melodic tracks the home row (A S D F… on QWERTY, Q S D F… on AZERTY) plays white keys and the row above plays black keys; `-` / `=` change the octave. On drum tracks each home-row key plays one drum, in order: kick, snare, clap, rim, hi-hat, open hat, toms, crash. MIDI keyboards work natively.
+- Your computer keyboard plays the selected track. On melodic tracks the home row (A S D F… on QWERTY, Q S D F… on AZERTY) plays white keys and the row above plays black keys; `-` / `=` change the octave. On drum tracks each home-row key plays one drum (kick, snare, clap, rim, hi-hat, open hat, toms, crash) and the row above plays the percussion (cowbell, tambourine, shaker, claves, congas, bongo); the drum grid shows each row's key. MIDI keyboards work natively.
 - **Recording:** select a track and press ⏺ Rec (or `R`) to record what you play on the keyboard or a MIDI keyboard. By default there's a one-bar count-in, a metronome, and notes snap to the grid; the ⏷ menu next to Rec turns each off. With Loop on, each pass adds notes on top. A whole take is one undo step.
 - File menu: save/open `.orch` songs and export WAV. The song also autosaves.
 

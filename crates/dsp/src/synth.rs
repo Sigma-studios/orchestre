@@ -2,6 +2,7 @@ use orchestre_core::SynthParams;
 
 use crate::env::Env;
 use crate::filter::Svf;
+use crate::fx::Chorus;
 use crate::osc::Osc;
 use crate::util::{Rng, TAU, midi_to_hz, pan_gains};
 
@@ -29,6 +30,8 @@ struct Voice {
     svf: [Svf; 2],
     lfo_phase: f32,
     rng: Rng,
+    /// Remaining pitch bend in semitones (falls to 0).
+    bend: f32,
 }
 
 impl Voice {
@@ -46,6 +49,7 @@ impl Voice {
         self.active = true;
         self.note = pitch;
         self.pitch = pitch as f32;
+        self.bend = p.bend;
         self.target = pitch as f32;
         self.vel = vel;
         self.off_at = off_at;
@@ -78,7 +82,12 @@ impl Voice {
         let lfo = (self.lfo_phase * TAU).sin();
         self.lfo_phase = (self.lfo_phase + p.lfo_rate * n as f32 / sr).fract();
 
-        let pitch = self.pitch + p.octave as f32 * 12.0 + lfo * p.lfo_pitch;
+        let pitch = self.pitch + self.bend + p.octave as f32 * 12.0 + lfo * p.lfo_pitch;
+        self.bend = if p.bend_time > 0.0 {
+            self.bend * (-(n as f32) / (p.bend_time * sr)).exp()
+        } else {
+            0.0
+        };
         let f1 = midi_to_hz(pitch);
         let f2 = midi_to_hz(pitch + p.osc2_semitones as f32 + p.osc2_detune / 100.0);
 
@@ -158,6 +167,7 @@ pub struct SynthEngine {
     /// Held notes in mono mode: (pitch, vel, off_at), most recent last.
     stack: [(u8, f32, f64); MONO_STACK],
     stack_len: usize,
+    chorus: Chorus,
 }
 
 impl SynthEngine {
@@ -169,6 +179,7 @@ impl SynthEngine {
             counter: 0,
             stack: [(0, 0.0, 0.0); MONO_STACK],
             stack_len: 0,
+            chorus: Chorus::new(sr),
         }
     }
 
@@ -313,6 +324,9 @@ impl SynthEngine {
     pub fn render(&mut self, l: &mut [f32], r: &mut [f32]) {
         for v in self.voices.iter_mut().filter(|v| v.active) {
             v.render(&self.params, self.sr, l, r);
+        }
+        if self.params.chorus > 0.0 {
+            self.chorus.process(l, r, self.params.chorus);
         }
     }
 }

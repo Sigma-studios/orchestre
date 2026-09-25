@@ -229,3 +229,70 @@ fn metronome_clicks_only_when_enabled() {
     assert!(run(true) > 0.1);
     assert!(run(false) < 1e-6);
 }
+
+/// Estimate the fundamental frequency by autocorrelation.
+fn pitch_of(x: &[f32], sr: f32) -> f32 {
+    let corr = |lag: usize| x.iter().zip(&x[lag..]).map(|(a, b)| a * b).sum::<f32>();
+    let (lo, hi) = ((sr / 1500.0) as usize, (sr / 30.0) as usize);
+    let best = (lo..hi)
+        .max_by(|&a, &b| corr(a).total_cmp(&corr(b)))
+        .unwrap();
+    let (a, b, c) = (corr(best - 1), corr(best), corr(best + 1));
+    sr / (best as f32 + 0.5 * (a - c) / (a - 2.0 * b + c))
+}
+
+#[test]
+fn plucked_strings_are_in_tune() {
+    use orchestre_core::{PluckKind, PluckParams};
+    let sr = SR as f32;
+    for kind in PluckKind::ALL {
+        for pitch in [40u8, 57, 69, 81] {
+            let mut e = crate::pluck::PluckEngine::new(
+                PluckParams {
+                    body: 0.0,
+                    ..kind.params()
+                },
+                sr,
+            );
+            e.note_on(pitch, 0.9, f64::INFINITY);
+            let mut out = Vec::new();
+            let (mut l, mut r) = ([0.0f32; 32], [0.0f32; 32]);
+            for _ in 0..600 {
+                l.fill(0.0);
+                r.fill(0.0);
+                e.render(&mut l, &mut r);
+                out.extend_from_slice(&l);
+            }
+            let f = pitch_of(&out[4096..4096 + 8192], sr);
+            let want = crate::util::midi_to_hz(pitch as f32);
+            let cents = 1200.0 * (f / want).log2();
+            assert!(
+                cents.abs() < 3.0,
+                "{kind:?} note {pitch}: {f} Hz is {cents:+.1} cents off"
+            );
+        }
+    }
+}
+
+#[test]
+fn muted_strings_stop_quickly() {
+    use orchestre_core::PluckKind;
+    let mut e = crate::pluck::PluckEngine::new(PluckKind::Guitar.params(), SR as f32);
+    e.note_on(60, 0.9, f64::INFINITY);
+    let (mut l, mut r) = ([0.0f32; 32], [0.0f32; 32]);
+    for _ in 0..100 {
+        e.render(&mut l, &mut r);
+    }
+    e.live_off(60);
+    // 0.3 s after the release it should be silent.
+    for _ in 0..(SR as usize * 3 / 10 / 32) {
+        l.fill(0.0);
+        r.fill(0.0);
+        e.render(&mut l, &mut r);
+    }
+    assert!(
+        peak(&l) < 1e-3,
+        "string still ringing after mute: {}",
+        peak(&l)
+    );
+}

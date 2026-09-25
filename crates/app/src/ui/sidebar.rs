@@ -3,8 +3,9 @@
 use egui::{Color32, RichText, Slider, Ui};
 use orchestre_core::edit::notes_outside_key;
 use orchestre_core::{
-    DrumKit, DrumParams, DrumPiece, FxParams, Instrument, Key, PPQ, PianoParams, SynthParams,
-    SynthPreset, Track, Wave,
+    Category, ChoirParams, DrumKit, DrumParams, DrumPiece, EPianoParams, FxParams, Instrument,
+    InstrumentChoice, Key, MalletParams, OrganParams, PPQ, PianoParams, PluckParams, SynthParams,
+    Track, Wave,
 };
 
 use crate::app::{KeyLockPrompt, OrchestreApp};
@@ -36,7 +37,7 @@ pub fn show(app: &mut OrchestreApp, ui: &mut Ui) {
             });
             ui.add_space(4.0);
 
-            instrument_picker(ui, &mut t);
+            instrument_picker(app, ui, &mut t);
             if !t.instrument.is_drums() {
                 key_lock_picker(app, ui, &track);
             }
@@ -47,6 +48,11 @@ pub fn show(app: &mut OrchestreApp, ui: &mut Ui) {
                 Instrument::Synth(p) => synth_ui(ui, p),
                 Instrument::Drums(p) => drums_ui(ui, p),
                 Instrument::Piano(p) => piano_ui(ui, p),
+                Instrument::EPiano(p) => epiano_ui(ui, p),
+                Instrument::Organ(p) => organ_ui(ui, p),
+                Instrument::Mallets(p) => mallets_ui(ui, p),
+                Instrument::Pluck(p) => pluck_ui(ui, p),
+                Instrument::Choir(p) => choir_ui(ui, p),
             }
             ui.separator();
             mix_ui(ui, &mut t);
@@ -71,7 +77,7 @@ pub fn show(app: &mut OrchestreApp, ui: &mut Ui) {
     }
 }
 
-fn instrument_picker(ui: &mut Ui, t: &mut Track) {
+fn instrument_picker(app: &mut OrchestreApp, ui: &mut Ui, t: &mut Track) {
     ui.horizontal(|ui| {
         ui.label("Sound");
         match &mut t.instrument {
@@ -83,6 +89,7 @@ fn instrument_picker(ui: &mut Ui, t: &mut Track) {
                             if ui.selectable_label(p.kit == kit, kit.label()).clicked() {
                                 *p = DrumParams {
                                     levels: p.levels,
+                                    perc_levels: p.perc_levels,
                                     gain: p.gain,
                                     ..kit.params()
                                 };
@@ -91,31 +98,31 @@ fn instrument_picker(ui: &mut Ui, t: &mut Track) {
                     });
             }
             inst => {
-                let current = inst.label();
+                // Any melodic instrument can replace another: the notes still fit.
+                let current = inst.choice();
                 egui::ComboBox::from_id_salt("preset")
                     .width(140.0)
-                    .selected_text(current)
+                    .height(420.0)
+                    .selected_text(current.label())
                     .show_ui(ui, |ui| {
-                        if ui
-                            .selectable_label(matches!(inst, Instrument::Piano(_)), "Piano")
-                            .clicked()
-                            && !matches!(inst, Instrument::Piano(_))
-                        {
-                            *inst = Instrument::Piano(PianoParams::default());
-                        }
-                        for preset in SynthPreset::ALL {
-                            let on = matches!(inst, Instrument::Synth(p) if p.preset == preset);
-                            if ui
-                                .selectable_label(on, preset.label())
-                                .on_hover_text(preset.description())
-                                .clicked()
+                        for cat in Category::ALL.into_iter().filter(|&c| c != Category::Drums) {
+                            ui.label(RichText::new(cat.label()).size(11.0).color(theme::TEXT_DIM));
+                            for choice in InstrumentChoice::all()
+                                .into_iter()
+                                .filter(|c| c.category() == cat)
                             {
-                                *inst = Instrument::Synth(preset.params());
+                                let resp = ui
+                                    .selectable_label(choice == current, choice.label())
+                                    .on_hover_text(choice.description());
+                                crate::ui::preview::hover(app, &resp, choice);
+                                if resp.clicked() && choice != current {
+                                    *inst = choice.instrument();
+                                }
                             }
                         }
                     })
                     .response
-                    .on_hover_text("Choosing a sound resets its settings to that preset");
+                    .on_hover_text("Choosing a sound resets its settings. Rest on one to hear it.");
             }
         }
     });
@@ -270,6 +277,12 @@ fn synth_ui(ui: &mut Ui, p: &mut SynthParams) {
                 .text("Stereo width"),
         );
         ui.add(
+            Slider::new(&mut p.chorus, 0.0..=1.0)
+                .show_value(false)
+                .text("Chorus"),
+        )
+        .on_hover_text("Thickens the sound, like several players at once");
+        ui.add(
             Slider::new(&mut p.gain, 0.0..=1.2)
                 .show_value(false)
                 .text("Level"),
@@ -318,6 +331,13 @@ fn synth_ui(ui: &mut Ui, p: &mut SynthParams) {
                 .suffix(" ct")
                 .text("Unison detune"),
         );
+        ui.add(
+            Slider::new(&mut p.bend, -24.0..=24.0)
+                .suffix(" st")
+                .text("Start bend"),
+        )
+        .on_hover_text("Each note starts this far off and slides to its pitch (808 bass)");
+        seconds(ui, &mut p.bend_time, 1.0, "Bend time");
         let mut oct = p.octave as i32;
         if ui
             .add(Slider::new(&mut oct, -3..=3).text("Octave"))
@@ -396,7 +416,7 @@ fn drums_ui(ui: &mut Ui, p: &mut DrumParams) {
     section(ui, "Drum levels", false, |ui| {
         for (i, piece) in DrumPiece::ALL.iter().enumerate() {
             ui.add(
-                Slider::new(&mut p.levels[i], 0.0..=1.5)
+                Slider::new(p.level_mut(i), 0.0..=1.5)
                     .show_value(false)
                     .text(piece.label()),
             );
@@ -482,7 +502,7 @@ fn help(ui: &mut Ui, drums: bool) {
         "Ctrl/Cmd + C / V / D: copy, paste, duplicate",
         "Arrows: nudge selection · Alt: no snapping",
         if drums {
-            "Home-row keys: play each drum live"
+            "Home row keys: drums · row above: percussion"
         } else {
             "Letter keys: play live · - / =: octave"
         },
@@ -494,4 +514,117 @@ fn help(ui: &mut Ui, drums: bool) {
                 ui.label(RichText::new(*l).size(11.5).color(theme::TEXT_DIM));
             }
         });
+}
+
+fn knob(
+    ui: &mut Ui,
+    v: &mut f32,
+    range: std::ops::RangeInclusive<f32>,
+    label: &str,
+) -> egui::Response {
+    ui.add(Slider::new(v, range).show_value(false).text(label))
+}
+
+fn epiano_ui(ui: &mut Ui, p: &mut EPianoParams) {
+    section(ui, "Sound", true, |ui| {
+        knob(ui, &mut p.tone, 0.0..=1.0, "Bark")
+            .on_hover_text("Soft and round ← → bright and growly");
+        knob(ui, &mut p.bell, 0.0..=1.0, "Bell")
+            .on_hover_text("Metallic ping at the start of each note");
+        ui.add(
+            Slider::new(&mut p.decay, 0.3..=3.0)
+                .logarithmic(true)
+                .show_value(false)
+                .text("Ring length"),
+        );
+        knob(ui, &mut p.tremolo, 0.0..=1.0, "Tremolo")
+            .on_hover_text("Sound swirling between left and right");
+        knob(ui, &mut p.gain, 0.0..=1.2, "Level");
+    });
+}
+
+fn organ_ui(ui: &mut Ui, p: &mut OrganParams) {
+    section(ui, "Sound", true, |ui| {
+        knob(ui, &mut p.rotary, 0.0..=1.0, "Spinning speaker").on_hover_text("Off ← slow → fast");
+        knob(ui, &mut p.click, 0.0..=1.0, "Key click");
+        ui.checkbox(&mut p.percussion, "Percussion ping")
+            .on_hover_text("A short bright ping at the start of each note");
+        knob(ui, &mut p.gain, 0.0..=1.2, "Level");
+    });
+    section(ui, "Drawbars", false, |ui| {
+        const NAMES: [&str; 9] = [
+            "16' (sub)",
+            "5 1/3'",
+            "8' (main)",
+            "4'",
+            "2 2/3'",
+            "2'",
+            "1 3/5'",
+            "1 1/3'",
+            "1'",
+        ];
+        ui.label(
+            RichText::new("Each bar adds a higher harmonic")
+                .size(11.5)
+                .color(theme::TEXT_DIM),
+        );
+        for (bar, name) in p.drawbars.iter_mut().zip(NAMES) {
+            knob(ui, bar, 0.0..=1.0, name);
+        }
+    });
+}
+
+fn mallets_ui(ui: &mut Ui, p: &mut MalletParams) {
+    section(ui, "Sound", true, |ui| {
+        knob(ui, &mut p.hardness, 0.0..=1.0, "Mallet hardness")
+            .on_hover_text("Soft felt ← → hard plastic");
+        ui.add(
+            Slider::new(&mut p.decay, 0.3..=3.0)
+                .logarithmic(true)
+                .show_value(false)
+                .text("Ring length"),
+        );
+        knob(ui, &mut p.tremolo, 0.0..=1.0, "Tremolo")
+            .on_hover_text("The vibraphone's pulsing shimmer");
+        ui.checkbox(&mut p.damper, "Stop at note end")
+            .on_hover_text("Otherwise bars ring freely");
+        knob(ui, &mut p.gain, 0.0..=1.2, "Level");
+    });
+}
+
+fn pluck_ui(ui: &mut Ui, p: &mut PluckParams) {
+    section(ui, "Sound", true, |ui| {
+        knob(ui, &mut p.brightness, 0.0..=1.0, "Brightness");
+        ui.add(
+            Slider::new(&mut p.decay, 0.3..=3.0)
+                .logarithmic(true)
+                .show_value(false)
+                .text("Ring length"),
+        );
+        knob(ui, &mut p.position, 0.0..=1.0, "Pluck position")
+            .on_hover_text("Near the bridge (thin) ← → middle (round)");
+        knob(ui, &mut p.body, 0.0..=1.0, "Body").on_hover_text("Resonance of the wooden body");
+        ui.checkbox(&mut p.ring, "Let strings ring")
+            .on_hover_text("Otherwise strings are muted when notes end");
+        knob(ui, &mut p.gain, 0.0..=1.2, "Level");
+    });
+}
+
+fn choir_ui(ui: &mut Ui, p: &mut ChoirParams) {
+    section(ui, "Sound", true, |ui| {
+        let vowel = if p.vowel < 0.25 {
+            "aah"
+        } else if p.vowel < 0.75 {
+            "ooh"
+        } else {
+            "eeh"
+        };
+        knob(ui, &mut p.vowel, 0.0..=1.0, &format!("Vowel: {vowel}"));
+        knob(ui, &mut p.ensemble, 0.0..=1.0, "Choir size");
+        knob(ui, &mut p.vibrato, 0.0..=1.0, "Vibrato");
+        knob(ui, &mut p.breath, 0.0..=1.0, "Breath");
+        seconds(ui, &mut p.attack, 3.0, "Fade in");
+        seconds(ui, &mut p.release, 4.0, "Fade out");
+        knob(ui, &mut p.gain, 0.0..=1.2, "Level");
+    });
 }

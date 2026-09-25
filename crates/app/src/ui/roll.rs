@@ -27,7 +27,7 @@ impl Rows {
         if track.instrument.is_drums() {
             return Rows {
                 pitches: (0..DrumPiece::ALL.len() as u8).collect(),
-                h: 30.0,
+                h: 24.0,
                 drums: true,
                 locked: false,
             };
@@ -242,8 +242,10 @@ fn draw_rows(p: &egui::Painter, geo: &Geo, rows: &Rows) {
         if dark {
             p.rect_filled(r, 0.0, theme::ROW_DARK);
         }
-        // Emphasize octave boundaries (the tonic row when locked).
-        if !rows.drums && pitch % 12 == 0 && !rows.locked {
+        // Emphasize octave boundaries, and the kit / percussion split.
+        let octave = !rows.drums && pitch % 12 == 0 && !rows.locked;
+        let kit_end = rows.drums && pitch as usize + 1 == DrumPiece::KIT_LEN;
+        if octave || kit_end {
             p.hline(
                 geo.grid.x_range(),
                 y + geo.h,
@@ -364,7 +366,7 @@ fn draw_keys(
         .filter(|(t, _)| *t == track.id)
         .map(|(_, p)| *p)
         .collect();
-    let font = FontId::proportional(if rows.drums { 12.0 } else { 10.0 });
+    let font = FontId::proportional(if rows.drums { 11.0 } else { 10.0 });
     let accent = theme::track_color(track.color);
     for (i, &pitch) in rows.pitches.iter().enumerate() {
         let y = geo.row_top(i);

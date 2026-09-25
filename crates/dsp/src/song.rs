@@ -1,6 +1,6 @@
 //! The engine-side view of a project, and the messages exchanged with it.
 
-use orchestre_core::{FxParams, Id, Instrument, Project, Tick};
+use orchestre_core::{FxParams, Id, Instrument, PreviewNote, Project, Tick};
 use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
@@ -133,6 +133,12 @@ pub enum Cmd {
     SetMetronome(bool),
     /// Click this many beats, then start playing from the current position.
     CountIn(u32),
+    /// Play a short phrase on an instrument outside the song (menu previews).
+    Preview {
+        instrument: Instrument,
+        notes: Vec<PreviewNote>,
+    },
+    StopPreview,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]

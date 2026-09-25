@@ -1,14 +1,19 @@
 //! Realtime synthesis engine for Orchestre. Runs natively on the audio
 //! thread and in the browser inside an AudioWorklet.
 
+pub mod choir;
 pub mod click;
 pub mod drums;
 pub mod engine;
 pub mod env;
+pub mod epiano;
 pub mod filter;
 pub mod fx;
+pub mod mallets;
+pub mod organ;
 pub mod osc;
 pub mod piano;
+pub mod pluck;
 pub mod render;
 pub mod song;
 pub mod synth;

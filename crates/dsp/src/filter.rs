@@ -22,6 +22,16 @@ impl Svf {
         self.a3 = g * self.a2;
     }
 
+    /// Set cutoff and quality factor directly (for narrow resonances).
+    pub fn set_q(&mut self, cutoff: f32, q: f32, sr: f32) {
+        let fc = cutoff.clamp(20.0, sr * 0.45);
+        let g = (PI * fc / sr).tan();
+        self.k = 1.0 / q.max(0.1);
+        self.a1 = 1.0 / (1.0 + g * (g + self.k));
+        self.a2 = g * self.a1;
+        self.a3 = g * self.a2;
+    }
+
     pub fn reset(&mut self) {
         self.ic1 = 0.0;
         self.ic2 = 0.0;
