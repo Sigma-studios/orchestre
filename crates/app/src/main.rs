@@ -7,6 +7,7 @@ mod io;
 #[cfg(not(target_arch = "wasm32"))]
 mod midi;
 mod record;
+mod settings;
 mod theme;
 mod ui;
 
@@ -19,7 +20,7 @@ fn main() -> eframe::Result {
         viewport: egui::ViewportBuilder::default()
             .with_title("Orchestre")
             .with_inner_size([1280.0, 800.0])
-            .with_min_inner_size([900.0, 560.0]),
+            .with_min_inner_size([1220.0, 600.0]),
         ..Default::default()
     };
     eframe::run_native(

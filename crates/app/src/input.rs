@@ -83,7 +83,7 @@ pub fn drum_at_semitone(semi: i32) -> Option<u8> {
 
 /// Keyboard layout, only used to print the right letters on the note
 /// editor's keys (playing always goes by key position).
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize)]
 pub enum KbLayout {
     #[default]
     Qwerty,
@@ -152,7 +152,7 @@ pub fn key_label_for(app: &OrchestreApp, pitch: u8, drums: bool) -> Option<&'sta
     } else {
         pitch as i32 - (app.octave as i32 + 1) * 12
     };
-    app.kb_layout.key_label(semi)
+    app.settings.kb_layout.key_label(semi)
 }
 
 pub fn handle(app: &mut OrchestreApp, ctx: &egui::Context) {
@@ -179,8 +179,8 @@ pub fn handle(app: &mut OrchestreApp, ctx: &egui::Context) {
                 repeat,
                 modifiers,
             } => {
-                if pressed && !app.kb_layout_manual {
-                    app.kb_layout = app.kb_layout.detect(key, physical_key);
+                if pressed && !app.settings.kb_layout_manual {
+                    app.settings.kb_layout = app.settings.kb_layout.detect(key, physical_key);
                 }
                 if modifiers.command {
                     if pressed {

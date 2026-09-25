@@ -7,7 +7,8 @@ use egui::{
 };
 use orchestre_core::edit;
 use orchestre_core::{
-    DrumPiece, Id, Note, PPQ, Tick, Track, is_black_key, pitch_name, snap_floor, snap_round,
+    DrumPiece, Id, Key, Note, NoteNaming, PPQ, Tick, Track, is_black_key, pitch_name_in,
+    snap_floor, snap_round,
 };
 
 use crate::app::{Drag, OrchestreApp};
@@ -19,17 +20,20 @@ struct Rows {
     pitches: Vec<u8>,
     h: f32,
     drums: bool,
-    locked: bool,
+    /// The key the rows are folded to, if the track is locked.
+    key: Option<Key>,
+    naming: NoteNaming,
 }
 
 impl Rows {
-    fn for_track(track: &Track) -> Rows {
+    fn for_track(track: &Track, naming: NoteNaming) -> Rows {
         if track.instrument.is_drums() {
             return Rows {
                 pitches: (0..DrumPiece::ALL.len() as u8).collect(),
                 h: 24.0,
                 drums: true,
-                locked: false,
+                key: None,
+                naming,
             };
         }
         let (lo, hi) = track.pitch_range();
@@ -42,8 +46,26 @@ impl Rows {
             pitches,
             h: if key.is_some() { 20.0 } else { 15.0 },
             drums: false,
-            locked: key.is_some(),
+            key,
+            naming,
         }
+    }
+
+    fn locked(&self) -> bool {
+        self.key.is_some()
+    }
+
+    /// Note name spelled for the key (G# in E major, not Ab).
+    fn name(&self, pitch: u8) -> String {
+        self.key.map_or_else(
+            || pitch_name_in(pitch, self.naming),
+            |k| k.spell_with_octave_in(pitch, self.naming),
+        )
+    }
+
+    /// The key's home note ("tonic"), highlighted so the key is audible at a glance.
+    fn is_tonic(&self, pitch: u8) -> bool {
+        self.key.is_some_and(|k| k.is_tonic(pitch))
     }
 
     fn row_of(&self, pitch: u8) -> Option<usize> {
@@ -127,7 +149,7 @@ pub fn show(app: &mut OrchestreApp, ui: &mut Ui, rect: Rect) {
     let Some(track) = app.selected_track().cloned() else {
         return;
     };
-    let rows = Rows::for_track(&track);
+    let rows = Rows::for_track(&track, app.naming());
     let color = theme::track_color(track.color);
 
     let ruler = Rect::from_min_max(
@@ -165,7 +187,7 @@ pub fn show(app: &mut OrchestreApp, ui: &mut Ui, rect: Rect) {
     };
 
     timeline::ruler(app, ui, ruler);
-    draw_corner(ui, corner, &track);
+    draw_corner(ui, corner, &track, rows.naming);
 
     let resp = ui.interact(
         grid,
@@ -179,7 +201,7 @@ pub fn show(app: &mut OrchestreApp, ui: &mut Ui, rect: Rect) {
         return;
     };
     let p = ui.painter_at(grid);
-    draw_rows(&p, &geo, &rows);
+    draw_rows(&p, &geo, &rows, color);
     timeline::draw_grid(&p, grid, &app.view, &app.project, true);
     draw_notes(app, &p, &geo, &rows, &track, color);
     draw_ghost(app, ui, &p, &geo, &rows, &track, color, &resp);
@@ -209,11 +231,11 @@ pub fn show(app: &mut OrchestreApp, ui: &mut Ui, rect: Rect) {
     draw_keys(app, ui, keys, &geo, &rows, &track);
 }
 
-fn draw_corner(ui: &Ui, corner: Rect, track: &Track) {
+fn draw_corner(ui: &Ui, corner: Rect, track: &Track, naming: NoteNaming) {
     let p = ui.painter_at(corner);
     p.rect_filled(corner, 0.0, theme::PANEL_LIGHT);
     let text = match track.effective_key() {
-        Some(k) => format!("🔒 {}", k.label()),
+        Some(k) => format!("🔒 {}", k.label_in(naming)),
         None if track.instrument.is_drums() => "Drums".into(),
         None => "Notes".into(),
     };
@@ -226,7 +248,7 @@ fn draw_corner(ui: &Ui, corner: Rect, track: &Track) {
     );
 }
 
-fn draw_rows(p: &egui::Painter, geo: &Geo, rows: &Rows) {
+fn draw_rows(p: &egui::Painter, geo: &Geo, rows: &Rows, accent: Color32) {
     p.rect_filled(geo.grid, 0.0, theme::GRID_BG);
     for (i, &pitch) in rows.pitches.iter().enumerate() {
         let y = geo.row_top(i);
@@ -237,13 +259,21 @@ fn draw_rows(p: &egui::Painter, geo: &Geo, rows: &Rows) {
         let dark = if rows.drums {
             i % 2 == 1
         } else {
-            !rows.locked && is_black_key(pitch)
+            !rows.locked() && is_black_key(pitch)
         };
         if dark {
             p.rect_filled(r, 0.0, theme::ROW_DARK);
         }
-        // Emphasize octave boundaries, and the kit / percussion split.
-        let octave = !rows.drums && pitch % 12 == 0 && !rows.locked;
+        if rows.is_tonic(pitch) {
+            p.rect_filled(r, 0.0, accent.gamma_multiply(0.1));
+        }
+        // Emphasize octave boundaries (below each tonic when locked), and
+        // the kit / percussion split.
+        let octave = if rows.locked() {
+            rows.is_tonic(pitch)
+        } else {
+            !rows.drums && pitch % 12 == 0
+        };
         let kit_end = rows.drums && pitch as usize + 1 == DrumPiece::KIT_LEN;
         if octave || kit_end {
             p.hline(
@@ -298,7 +328,7 @@ fn draw_notes(
             p.text(
                 pos2(r.left() + 4.0, r.center().y),
                 Align2::LEFT_CENTER,
-                pitch_name(n.pitch),
+                rows.name(n.pitch),
                 font.clone(),
                 Color32::from_black_alpha(200),
             );
@@ -389,12 +419,18 @@ fn draw_keys(
         } else {
             (Color32::from_gray(215), Color32::from_gray(40))
         };
-        let fill = if playing { accent } else { fill };
+        let fill = if playing {
+            accent
+        } else if rows.is_tonic(pitch) {
+            fill.lerp_to_gamma(accent, 0.45)
+        } else {
+            fill
+        };
         p.rect_filled(r, 2.0, fill);
         let label = if rows.drums {
             Some(DrumPiece::ALL[pitch as usize].label().to_string())
-        } else if rows.locked || pitch % 12 == 0 {
-            Some(pitch_name(pitch))
+        } else if rows.locked() || pitch % 12 == 0 {
+            Some(rows.name(pitch))
         } else {
             None
         };

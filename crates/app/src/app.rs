@@ -9,7 +9,6 @@ use crate::history::History;
 use crate::io::Inbox;
 
 const STORAGE_KEY: &str = "orchestre_project";
-const LAYOUT_KEY: &str = "orchestre_kb_layout";
 
 /// Horizontal view shared by the note editor and the track lanes.
 pub struct View {
@@ -51,8 +50,11 @@ impl View {
 
 /// The key-lock confirmation dialog.
 pub struct KeyLockPrompt {
-    pub track: Id,
+    /// `None`: the song key is changing; `Some`: one track starts following it.
+    pub track: Option<Id>,
     pub key: Key,
+    /// The song key before the change (offers "transpose" when set).
+    pub from: Option<Key>,
     pub conflicts: usize,
 }
 
@@ -103,9 +105,8 @@ pub struct OrchestreApp {
     pub confirm_delete_track: Option<Id>,
     pub renaming: Option<(Id, String)>,
     pub octave: i8,
-    pub kb_layout: crate::input::KbLayout,
-    /// Chosen by the user; otherwise detected from key presses.
-    pub kb_layout_manual: bool,
+    pub settings: crate::settings::Settings,
+    pub settings_open: bool,
     /// Keyboard keys currently held down, and the note they play.
     pub held_keys: HashMap<egui::Key, (Id, u8)>,
     /// Short note previews: (track, pitch, stop time).
@@ -136,16 +137,6 @@ impl OrchestreApp {
             .and_then(|s| s.get_string(STORAGE_KEY))
             .and_then(|json| crate::io::parse_project(&json).ok());
         let first_run = saved.is_none();
-        // Stored as "<layout>" when chosen by the user, "auto:<layout>" when detected.
-        let layout_pref = cc
-            .storage
-            .and_then(|s| s.get_string(LAYOUT_KEY))
-            .unwrap_or_default();
-        let (kb_layout_manual, layout_name) = match layout_pref.strip_prefix("auto:") {
-            Some(name) => (false, name.to_string()),
-            None => (!layout_pref.is_empty(), layout_pref.clone()),
-        };
-        let kb_layout = crate::input::KbLayout::from_label(&layout_name).unwrap_or_default();
         let project = saved.unwrap_or_else(Project::demo);
         let selected = if first_run {
             project.tracks.get(1).map(|t| t.id)
@@ -154,8 +145,7 @@ impl OrchestreApp {
         };
         let mut app = Self::build(project, Audio::new());
         app.selected = selected;
-        app.kb_layout = kb_layout;
-        app.kb_layout_manual = kb_layout_manual;
+        app.settings = crate::settings::Settings::load(cc.storage);
         #[cfg(not(target_arch = "wasm32"))]
         {
             app.midi = crate::midi::Midi::connect(cc.egui_ctx.clone());
@@ -193,8 +183,8 @@ impl OrchestreApp {
             confirm_delete_track: None,
             renaming: None,
             octave: 4,
-            kb_layout: Default::default(),
-            kb_layout_manual: false,
+            settings: Default::default(),
+            settings_open: false,
             held_keys: HashMap::new(),
             auditions: Vec::new(),
             toast: None,
@@ -291,6 +281,52 @@ impl OrchestreApp {
         for (key, (track, pitch)) in held {
             self.send(Cmd::LiveNoteOff { track, pitch });
             self.record_note_off(crate::record::Source::Key(key));
+        }
+    }
+
+    pub fn naming(&self) -> orchestre_core::NoteNaming {
+        self.settings.note_naming
+    }
+
+    /// Change the song key, asking first if existing notes don't fit.
+    pub fn request_song_key(&mut self, key: Option<Key>) {
+        use orchestre_core::edit::KeyChange;
+        let Some(k) = key else {
+            self.project.set_key(None, KeyChange::Delete);
+            self.touch();
+            return;
+        };
+        let conflicts = self.project.notes_outside(k);
+        if conflicts == 0 {
+            self.project.set_key(Some(k), KeyChange::Delete);
+            self.touch();
+        } else {
+            self.key_prompt = Some(KeyLockPrompt {
+                track: None,
+                key: k,
+                from: self.project.key,
+                conflicts,
+            });
+        }
+    }
+
+    /// Make a track follow (or stop following) the song key.
+    pub fn request_follow(&mut self, track: Id, follow: bool) {
+        use orchestre_core::edit::{KeyConflict, notes_outside_key};
+        let conflicts = match (follow, self.project.key, self.project.track(track)) {
+            (true, Some(k), Some(t)) => notes_outside_key(t, k).len(),
+            _ => 0,
+        };
+        if conflicts == 0 {
+            self.project.set_follow(track, follow, KeyConflict::Delete);
+            self.touch();
+        } else if let Some(key) = self.project.key {
+            self.key_prompt = Some(KeyLockPrompt {
+                track: Some(track),
+                key,
+                from: None,
+                conflicts,
+            });
         }
     }
 
@@ -521,6 +557,7 @@ impl eframe::App for OrchestreApp {
             .frame(egui::Frame::central_panel(ui.style()).inner_margin(0.0))
             .show(ui, |ui| crate::ui::editor::show(self, ui));
         crate::ui::dialogs::show(self, &ctx);
+        crate::settings::window(self, &ctx);
         crate::ui::preview::end_frame(self);
 
         self.sync_audio();
@@ -531,13 +568,7 @@ impl eframe::App for OrchestreApp {
         if let Ok(json) = crate::io::project_to_json(&self.project) {
             storage.set_string(STORAGE_KEY, json);
         }
-        let layout = self.kb_layout.label();
-        let pref = if self.kb_layout_manual {
-            layout.to_string()
-        } else {
-            format!("auto:{layout}")
-        };
-        storage.set_string(LAYOUT_KEY, pref);
+        self.settings.save(storage);
     }
 
     fn auto_save_interval(&self) -> std::time::Duration {

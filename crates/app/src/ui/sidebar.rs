@@ -1,14 +1,13 @@
 //! Left sidebar of the note editor: instrument sound, key lock, mix.
 
 use egui::{Color32, RichText, Slider, Ui};
-use orchestre_core::edit::notes_outside_key;
 use orchestre_core::{
-    Category, ChoirParams, DrumKit, DrumParams, DrumPiece, EPianoParams, FxParams, Instrument,
-    InstrumentChoice, Key, MalletParams, OrganParams, PPQ, PianoParams, PluckParams, SynthParams,
-    Track, Wave,
+    Category, ChoirParams, DrumKit, DrumParams, DrumPiece, EPianoParams, FxParams, Grid,
+    Instrument, InstrumentChoice, MalletParams, OrganParams, PPQ, PianoParams, PluckParams,
+    SynthParams, Track, Wave,
 };
 
-use crate::app::{KeyLockPrompt, OrchestreApp};
+use crate::app::OrchestreApp;
 use crate::theme;
 
 pub fn show(app: &mut OrchestreApp, ui: &mut Ui) {
@@ -131,61 +130,48 @@ fn instrument_picker(app: &mut OrchestreApp, ui: &mut Ui, t: &mut Track) {
 fn key_lock_picker(app: &mut OrchestreApp, ui: &mut Ui, track: &Track) {
     ui.horizontal(|ui| {
         ui.label("Key");
-        let text = track.key_lock.map_or("Off (all notes)".to_string(), |k| {
-            format!("🔒 {}", k.label())
-        });
-        let mut choice: Option<Option<Key>> = None;
-        egui::ComboBox::from_id_salt("key")
-            .width(140.0)
-            .selected_text(text)
-            .show_ui(ui, |ui| {
+        match app.project.key {
+            Some(key) => {
+                let mut follow = track.follow_key;
+                let label = format!("Lock to {}", key.label_in(app.naming()));
                 if ui
-                    .selectable_label(track.key_lock.is_none(), "Off (all notes)")
-                    .clicked()
+                    .checkbox(&mut follow, label)
+                    .on_hover_text(
+                        "Show only the notes of the song key. Change the key in the top bar.",
+                    )
+                    .changed()
                 {
-                    choice = Some(None);
-                }
-                for k in Key::PRESETS {
-                    if ui
-                        .selectable_label(track.key_lock == Some(k), k.label())
-                        .clicked()
-                    {
-                        choice = Some(Some(k));
-                    }
-                }
-            })
-            .response
-            .on_hover_text(
-                "Lock this track to a key: only notes that sound good together are shown.",
-            );
-        match choice {
-            Some(None) if track.key_lock.is_some() => {
-                if let Some(t) = app.project.track_mut(track.id) {
-                    t.key_lock = None;
-                }
-                app.touch();
-            }
-            Some(Some(k)) if track.key_lock != Some(k) => {
-                let conflicts = notes_outside_key(track, k).len();
-                if conflicts == 0 {
-                    if let Some(t) = app.project.track_mut(track.id) {
-                        t.key_lock = Some(k);
-                    }
-                    app.touch();
-                } else {
-                    app.key_prompt = Some(KeyLockPrompt {
-                        track: track.id,
-                        key: k,
-                        conflicts,
-                    });
+                    app.request_follow(track.id, follow);
                 }
             }
-            _ => {}
+            None => {
+                ui.label(RichText::new("None (set one in the top bar)").color(theme::TEXT_DIM))
+                    .on_hover_text(
+                        "Pick a song key at the top to only see notes that sound good together",
+                    );
+            }
         }
     });
 }
 
 fn note_tools(app: &mut OrchestreApp, ui: &mut Ui, t: &mut Track) {
+    ui.horizontal(|ui| {
+        ui.label("Snap");
+        let grid = app.project.grid;
+        egui::ComboBox::from_id_salt("grid")
+            .width(90.0)
+            .selected_text(grid.label())
+            .show_ui(ui, |ui| {
+                for g in Grid::ALL {
+                    if ui.selectable_label(g == grid, g.label()).clicked() && g != grid {
+                        app.project.grid = g;
+                        app.touch();
+                    }
+                }
+            })
+            .response
+            .on_hover_text("Notes snap to this rhythm. Hold Alt while dragging to place freely.");
+    });
     if !t.instrument.is_drums() {
         ui.horizontal(|ui| {
             ui.label("New notes");

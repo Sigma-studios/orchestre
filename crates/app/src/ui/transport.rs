@@ -1,5 +1,5 @@
 use egui::{Color32, RichText, Ui};
-use orchestre_core::{Grid, TimeSig};
+use orchestre_core::{Family, Key, Scale, TimeSig};
 
 use crate::app::OrchestreApp;
 use crate::theme;
@@ -9,8 +9,8 @@ pub fn show(app: &mut OrchestreApp, ui: &mut Ui) {
         .frame(egui::Frame::new().fill(theme::PANEL).inner_margin(egui::Margin::symmetric(12, 8)))
         .show(ui, |ui| {
             ui.horizontal(|ui| {
-                ui.label(RichText::new("♫ Orchestre").strong().size(18.0).color(theme::ACCENT));
-                ui.add_space(12.0);
+                ui.label(RichText::new("♫").strong().size(20.0).color(theme::ACCENT)).on_hover_text("Orchestre");
+                ui.add_space(4.0);
 
                 file_menu(app, ui);
                 ui.separator();
@@ -53,18 +53,7 @@ pub fn show(app: &mut OrchestreApp, ui: &mut Ui) {
                     }
                 });
 
-                ui.label("Snap");
-                let grid = app.project.grid;
-                egui::ComboBox::from_id_salt("grid").width(90.0).selected_text(grid.label()).show_ui(ui, |ui| {
-                    for g in Grid::ALL {
-                        if ui.selectable_label(g == grid, g.label()).clicked() && g != grid {
-                            app.project.grid = g;
-                            app.touch();
-                        }
-                    }
-                })
-                .response
-                .on_hover_text("Notes snap to this rhythm. Hold Alt while dragging to place freely.");
+                key_picker(app, ui);
 
                 ui.label("Bars");
                 let mut bars = app.project.length_bars;
@@ -123,7 +112,89 @@ fn file_menu(app: &mut OrchestreApp, ui: &mut Ui) {
         if ui.button("Export WAV…").clicked() {
             crate::io::export_wav(app);
         }
+        ui.separator();
+        if ui.button("Settings…").clicked() {
+            app.settings_open = true;
+        }
     });
+}
+
+/// Song key: popular keys by major/minor feel, then the scale variants
+/// that fit the chosen key.
+fn key_picker(app: &mut OrchestreApp, ui: &mut Ui) {
+    ui.label("Key");
+    let current = app.project.key;
+    let naming = app.naming();
+    let text = current.map_or("None".to_string(), |k| k.label_in(naming));
+    let mut pick: Option<Option<Key>> = None;
+    egui::ComboBox::from_id_salt("songkey")
+        .width(115.0)
+        .height(520.0)
+        .selected_text(text)
+        .show_ui(ui, |ui| {
+            if ui
+                .selectable_label(current.is_none(), "None (all notes)")
+                .clicked()
+            {
+                pick = Some(None);
+            }
+            for (family, title) in [
+                (Family::Major, "Major keys (happy, bright)"),
+                (Family::Minor, "Minor keys (sad, moody)"),
+            ] {
+                ui.separator();
+                ui.label(RichText::new(title).size(11.0).color(theme::TEXT_DIM));
+                for preset in Key::PRESETS
+                    .into_iter()
+                    .filter(|k| k.scale.family() == family)
+                {
+                    let on = current.is_some_and(|k| k.base() == preset);
+                    if ui.selectable_label(on, preset.label_in(naming)).clicked() {
+                        // Keep the chosen scale variant when the feel doesn't change.
+                        let scale = match current {
+                            Some(k) if k.scale.family() == family => k.scale,
+                            _ => preset.scale,
+                        };
+                        pick = Some(Some(Key::new(preset.root, scale)));
+                    }
+                }
+            }
+            if let Some(k) = current {
+                ui.separator();
+                ui.label(
+                    RichText::new(format!("Notes to use in {}", k.base().label_in(naming)))
+                        .size(11.0)
+                        .color(theme::TEXT_DIM),
+                );
+                for scale in Scale::ALL
+                    .into_iter()
+                    .filter(|s| s.family() == k.scale.family())
+                {
+                    if ui
+                        .selectable_label(k.scale == scale, capitalize(scale.label_in(naming)))
+                        .on_hover_text(scale.description())
+                        .clicked()
+                    {
+                        pick = Some(Some(Key::new(k.root, scale)));
+                    }
+                }
+            }
+        })
+        .response
+        .on_hover_text(
+            "The song's key: tracks locked to it only show notes that sound good together",
+        );
+    if let Some(key) = pick
+        && key != current
+    {
+        app.request_song_key(key);
+    }
+}
+
+fn capitalize(s: &str) -> String {
+    let mut c = s.chars();
+    c.next()
+        .map_or_else(String::new, |f| f.to_uppercase().chain(c).collect())
 }
 
 fn record_controls(app: &mut OrchestreApp, ui: &mut Ui) {
@@ -180,26 +251,31 @@ fn record_controls(app: &mut OrchestreApp, ui: &mut Ui) {
 }
 
 fn keyboard_menu(app: &mut OrchestreApp, ui: &mut Ui) -> egui::Response {
-    let text = RichText::new(format!("⌨ Oct {}", app.octave)).color(theme::TEXT_DIM);
+    // Shown in the chosen naming: the octave from C4 is "3" in French.
+    let shown = app.naming().octave(app.octave as i32);
+    let text = RichText::new(format!("⌨ Oct {shown}")).color(theme::TEXT_DIM);
     ui.menu_button(text, |ui| {
         ui.label(RichText::new("Keyboard layout").strong());
-        let auto = !app.kb_layout_manual;
+        let auto = !app.settings.kb_layout_manual;
         if ui
             .radio(
                 auto,
-                format!("Automatic (detected: {})", app.kb_layout.label()),
+                format!("Automatic (detected: {})", app.settings.kb_layout.label()),
             )
             .clicked()
         {
-            app.kb_layout_manual = false;
+            app.settings.kb_layout_manual = false;
         }
         for l in crate::input::KbLayout::ALL {
             if ui
-                .radio(app.kb_layout_manual && app.kb_layout == l, l.label())
+                .radio(
+                    app.settings.kb_layout_manual && app.settings.kb_layout == l,
+                    l.label(),
+                )
                 .clicked()
             {
-                app.kb_layout = l;
-                app.kb_layout_manual = true;
+                app.settings.kb_layout = l;
+                app.settings.kb_layout_manual = true;
             }
         }
         ui.separator();
@@ -208,7 +284,7 @@ fn keyboard_menu(app: &mut OrchestreApp, ui: &mut Ui) -> egui::Response {
             if ui.button("−").clicked() {
                 app.octave = (app.octave - 1).max(0);
             }
-            ui.label(app.octave.to_string());
+            ui.label(shown.to_string());
             if ui.button("+").clicked() {
                 app.octave = (app.octave + 1).min(8);
             }
@@ -223,18 +299,14 @@ fn position_display(app: &OrchestreApp, ui: &mut Ui) {
     let bar = t / ts.bar_ticks() + 1;
     let beat = (t % ts.bar_ticks()) / ts.beat_ticks() + 1;
     let secs = t as f64 * app.project.seconds_per_tick();
+    let time = format!("{}:{:04.1}", (secs / 60.0) as u32, secs % 60.0);
     ui.label(
         RichText::new(format!("{bar:>3}.{beat}"))
             .monospace()
             .size(16.0)
             .strong(),
     )
-    .on_hover_text("Bar . beat");
-    ui.label(
-        RichText::new(format!("{}:{:04.1}", (secs / 60.0) as u32, secs % 60.0))
-            .monospace()
-            .color(theme::TEXT_DIM),
-    );
+    .on_hover_text(format!("Bar {bar}, beat {beat} ({time})"));
 }
 
 /// Horizontal level meter.

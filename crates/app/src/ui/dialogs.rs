@@ -1,5 +1,5 @@
 use egui::{Color32, RichText};
-use orchestre_core::edit::{KeyConflict, apply_key_lock};
+use orchestre_core::edit::{KeyChange, KeyConflict};
 
 use crate::app::OrchestreApp;
 use crate::theme;
@@ -14,37 +14,49 @@ fn key_lock(app: &mut OrchestreApp, ctx: &egui::Context) {
     let Some(prompt) = &app.key_prompt else {
         return;
     };
-    let (track, key, n) = (prompt.track, prompt.key, prompt.conflicts);
-    let mut choice: Option<Option<KeyConflict>> = None;
+    let (track, key, from, n) = (prompt.track, prompt.key, prompt.from, prompt.conflicts);
+    let naming = app.naming();
+    let s = if n == 1 { "" } else { "s" };
+    let (it, is) = if n == 1 {
+        ("it", "is")
+    } else {
+        ("them", "are")
+    };
+    // A song that already has a key can move to the new one as a whole.
+    let can_transpose = track.is_none() && from.is_some();
+    let mut choice: Option<Option<KeyChange>> = None;
     let resp = egui::Modal::new(egui::Id::new("keylock")).show(ctx, |ui| {
-        ui.set_max_width(380.0);
-        ui.heading(format!("Lock to {}?", key.label()));
+        ui.set_max_width(420.0);
+        match (track, from) {
+            (None, Some(from)) => ui.heading(format!("Change key from {} to {}?", from.label_in(naming), key.label_in(naming))),
+            (None, None) => ui.heading(format!("Set the song key to {}?", key.label_in(naming))),
+            (Some(_), _) => ui.heading(format!("Lock this track to {}?", key.label_in(naming))),
+        };
         ui.add_space(6.0);
-        let s = if n == 1 { "" } else { "s" };
-        ui.label(format!(
-            "{n} note{s} on this track {} not part of {}.",
-            if n == 1 { "is" } else { "are" },
-            key.label()
-        ));
-        ui.label(
-            RichText::new(format!(
-                "Locking will delete {} — or you can move {} to the nearest note in the key.",
-                if n == 1 { "it" } else { "them" },
-                if n == 1 { "it" } else { "them" }
-            ))
-            .color(theme::TEXT_DIM),
-        );
+        let place = if track.is_some() { "on this track" } else { "in the song" };
+        ui.label(format!("{n} note{s} {place} {is} not part of {}.", key.label_in(naming)));
+        let hint = if can_transpose {
+            "Transposing moves every note into the new key, so melodies keep their shape. Or you can delete or move only the notes that don't fit."
+        } else {
+            "You can delete them, or move them to the nearest note in the key."
+        };
+        ui.label(RichText::new(hint).color(theme::TEXT_DIM));
         ui.add_space(12.0);
-        ui.horizontal(|ui| {
-            let del = egui::Button::new(
-                RichText::new(format!("Delete {n} note{s} & lock")).color(Color32::WHITE),
-            )
-            .fill(Color32::from_rgb(150, 60, 50));
-            if ui.add(del).clicked() {
-                choice = Some(Some(KeyConflict::Delete));
+        ui.horizontal_wrapped(|ui| {
+            if can_transpose {
+                let t = egui::Button::new(RichText::new("Transpose all notes").color(Color32::WHITE))
+                    .fill(Color32::from_rgb(50, 110, 70));
+                if ui.add(t).clicked() {
+                    choice = Some(Some(KeyChange::Transpose));
+                }
             }
-            if ui.button("Move to nearest & lock").clicked() {
-                choice = Some(Some(KeyConflict::Snap));
+            let del = egui::Button::new(RichText::new(format!("Delete {n} note{s}")).color(Color32::WHITE))
+                .fill(Color32::from_rgb(150, 60, 50));
+            if ui.add(del).clicked() {
+                choice = Some(Some(KeyChange::Delete));
+            }
+            if ui.button(format!("Move {it} to nearest")).clicked() {
+                choice = Some(Some(KeyChange::Snap));
             }
             if ui.button("Cancel").clicked() {
                 choice = Some(None);
@@ -54,22 +66,33 @@ fn key_lock(app: &mut OrchestreApp, ctx: &egui::Context) {
     if resp.should_close() && choice.is_none() {
         choice = Some(None);
     }
-    if let Some(c) = choice {
-        app.key_prompt = None;
-        if let Some(c) = c {
-            if let Some(t) = app.project.track_mut(track) {
-                apply_key_lock(t, key, c);
-            }
-            let remaining: std::collections::HashSet<_> = app
-                .project
-                .track(track)
-                .map(|t| t.notes.iter().map(|n| n.id).collect())
-                .unwrap_or_default();
-            app.selection.retain(|id| remaining.contains(id));
-            app.touch();
-            app.notify(format!("Locked to {} (Undo to revert)", key.label()));
+    let Some(Some(change)) = choice else {
+        if choice.is_some() {
+            app.key_prompt = None;
+        }
+        return;
+    };
+    app.key_prompt = None;
+    match track {
+        None => app.project.set_key(Some(key), change),
+        Some(id) => {
+            let conflict = if change == KeyChange::Snap {
+                KeyConflict::Snap
+            } else {
+                KeyConflict::Delete
+            };
+            app.project.set_follow(id, true, conflict);
         }
     }
+    let existing: std::collections::HashSet<_> = app
+        .project
+        .tracks
+        .iter()
+        .flat_map(|t| t.notes.iter().map(|n| n.id))
+        .collect();
+    app.selection.retain(|id| existing.contains(id));
+    app.touch();
+    app.notify(format!("Now in {} (Undo to revert)", key.label_in(naming)));
 }
 
 fn delete_track(app: &mut OrchestreApp, ctx: &egui::Context) {

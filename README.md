@@ -48,7 +48,8 @@ On the web the engine runs in an AudioWorklet (built by a Trunk pre-build hook i
   - right-click a note to delete it;
   - Shift+drag (adds to the selection) or Ctrl/Cmd+drag on empty space to select an area.
 - Ctrl/Cmd + C / X / V / D: copy, cut, paste (at the mouse), duplicate. Arrows nudge the selection; Alt disables snapping.
-- **Key** (sidebar): locks a melodic track to a key and shows only in-key rows. If existing notes don't fit, you're asked whether to delete them or move them to the nearest in-key note.
+- **Key** (top bar): the song's key: popular major and minor keys, plus scale options for the chosen key (pentatonic, blues, harmonic minor, dorian). Melodic tracks follow it ("Lock to …" in the sidebar), show only its notes, and highlight its home note. If notes don't fit a new key, you can transpose the whole song into it, or delete or move just those notes.
+- **Settings** (File → Settings…): note names in English (C D E, middle C = C4) or French (Do Ré Mi, middle C = Do3), and the keyboard layout used for key labels. Saved between sessions; the first run follows the system language.
 - Space: play/stop. Ctrl/Cmd+Z: undo; Ctrl/Cmd+Shift+Z: redo.
 - Your computer keyboard plays the selected track. On melodic tracks the home row (A S D F… on QWERTY, Q S D F… on AZERTY) plays white keys and the row above plays black keys; `-` / `=` change the octave. On drum tracks each home-row key plays one drum (kick, snare, clap, rim, hi-hat, open hat, toms, crash) and the row above plays the percussion (cowbell, tambourine, shaker, claves, congas, bongo); the drum grid shows each row's key. MIDI keyboards work natively.
 - **Recording:** select a track and press ⏺ Rec (or `R`) to record what you play on the keyboard or a MIDI keyboard. By default there's a one-bar count-in, a metronome, and notes snap to the grid; the ⏷ menu next to Rec turns each off. With Loop on, each pass adds notes on top. A whole take is one undo step.

@@ -24,6 +24,35 @@ pub enum KeyConflict {
     Snap,
 }
 
+/// How a song key change treats existing notes.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum KeyChange {
+    /// Remove notes that don't fit.
+    Delete,
+    /// Move notes that don't fit to the nearest in-key note.
+    Snap,
+    /// Move every note into the new key, keeping melodies' shape.
+    Transpose,
+}
+
+/// Move every note of `track` from key `from` into key `to`.
+pub fn transpose_track(track: &mut Track, from: Key, to: Key) {
+    let (lo, hi) = track.pitch_range();
+    for n in &mut track.notes {
+        let p = from.transpose_to(to, n.pitch);
+        // Keep within the playable range, one octave at a time.
+        n.pitch = if p < lo {
+            p + 12
+        } else if p > hi {
+            p - 12
+        } else {
+            p
+        };
+    }
+    dedup_notes(track);
+    track.key_lock = Some(to);
+}
+
 /// Lock `track` to `key`, resolving out-of-key notes as requested.
 pub fn apply_key_lock(track: &mut Track, key: Key, conflict: KeyConflict) {
     match conflict {
@@ -306,6 +335,45 @@ mod tests {
             drums: true,
         };
         assert!(paste(p.track_mut(t).unwrap(), &clip, 0, &mut next).is_empty());
+    }
+
+    #[test]
+    fn song_key_change_transposes_or_deletes() {
+        let c_maj = Key {
+            root: 0,
+            scale: Scale::Major,
+        };
+        let d_maj = Key {
+            root: 2,
+            scale: Scale::Major,
+        };
+        let (mut p, t) = project_with(&[(0, 60), (240, 64), (480, 65)]);
+        p.key = Some(c_maj);
+        p.sync_keys();
+        // C E F in C major: F and C don't fit D major.
+        assert_eq!(p.notes_outside(d_maj), 2);
+
+        let mut moved = p.clone();
+        moved.set_key(Some(d_maj), KeyChange::Transpose);
+        let pitches: Vec<u8> = moved
+            .track(t)
+            .unwrap()
+            .notes
+            .iter()
+            .map(|n| n.pitch)
+            .collect();
+        assert_eq!(pitches, vec![62, 66, 67]); // D F# G: same melody, new key
+        assert_eq!(moved.track(t).unwrap().key_lock, Some(d_maj));
+
+        p.set_key(Some(d_maj), KeyChange::Delete);
+        let pitches: Vec<u8> = p.track(t).unwrap().notes.iter().map(|n| n.pitch).collect();
+        assert_eq!(pitches, vec![64]);
+
+        // A track that doesn't follow the song key is left alone.
+        p.set_follow(t, false, KeyConflict::Delete);
+        assert_eq!(p.track(t).unwrap().key_lock, None);
+        p.set_key(Some(c_maj), KeyChange::Delete);
+        assert_eq!(p.track(t).unwrap().key_lock, None);
     }
 
     #[test]

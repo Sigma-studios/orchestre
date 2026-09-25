@@ -55,9 +55,19 @@ pub struct Track {
     pub pan: f32,
     pub mute: bool,
     pub solo: bool,
+    /// The key this track's notes are locked to. Derived from the song key
+    /// and `follow_key` (see [`Project::sync_keys`]); stored so that files
+    /// stay readable by older versions.
     pub key_lock: Option<Key>,
+    /// Whether this track follows the song key.
+    #[serde(default = "yes")]
+    pub follow_key: bool,
     pub fx: FxParams,
     pub notes: Vec<Note>,
+}
+
+fn yes() -> bool {
+    true
 }
 
 impl Track {
@@ -103,6 +113,9 @@ pub struct Project {
     pub length_bars: u32,
     pub tracks: Vec<Track>,
     pub next_id: Id,
+    /// The song's key: melodic tracks that follow it only show its notes.
+    #[serde(default)]
+    pub key: Option<Key>,
 }
 
 impl Default for Project {
@@ -114,6 +127,7 @@ impl Default for Project {
             length_bars: 8,
             tracks: Vec::new(),
             next_id: 1,
+            key: None,
         }
     }
 }
@@ -157,10 +171,71 @@ impl Project {
             mute: false,
             solo: false,
             key_lock: None,
+            follow_key: true,
             fx: FxParams::default(),
             notes: Vec::new(),
         });
+        self.sync_keys();
         id
+    }
+
+    /// Update every track's key lock from the song key.
+    pub fn sync_keys(&mut self) {
+        let key = self.key;
+        for t in &mut self.tracks {
+            t.key_lock = if t.follow_key && !t.instrument.is_drums() {
+                key
+            } else {
+                None
+            };
+        }
+    }
+
+    /// Tracks affected by the song key.
+    fn keyed_tracks(&mut self) -> impl Iterator<Item = &mut Track> {
+        self.tracks
+            .iter_mut()
+            .filter(|t| t.follow_key && !t.instrument.is_drums())
+    }
+
+    /// Notes that don't fit `key`, across the tracks following the song key.
+    pub fn notes_outside(&self, key: Key) -> usize {
+        self.tracks
+            .iter()
+            .filter(|t| t.follow_key && !t.instrument.is_drums())
+            .map(|t| crate::edit::notes_outside_key(t, key).len())
+            .sum()
+    }
+
+    /// Change the song key. Notes that don't fit are handled as `change`
+    /// says; with [`KeyChange::Transpose`] every note moves into the new key.
+    pub fn set_key(&mut self, key: Option<Key>, change: crate::edit::KeyChange) {
+        use crate::edit::{KeyChange, KeyConflict, apply_key_lock, transpose_track};
+        let from = self.key;
+        if let Some(to) = key {
+            for t in self.keyed_tracks() {
+                match (change, from) {
+                    (KeyChange::Transpose, Some(from)) => transpose_track(t, from, to),
+                    (KeyChange::Snap, _) => apply_key_lock(t, to, KeyConflict::Snap),
+                    _ => apply_key_lock(t, to, KeyConflict::Delete),
+                }
+            }
+        }
+        self.key = key;
+        self.sync_keys();
+    }
+
+    /// Make one track follow (or stop following) the song key.
+    pub fn set_follow(&mut self, track: Id, follow: bool, conflict: crate::edit::KeyConflict) {
+        let key = self.key;
+        let Some(t) = self.track_mut(track) else {
+            return;
+        };
+        t.follow_key = follow;
+        if follow && let Some(k) = key {
+            crate::edit::apply_key_lock(t, k, conflict);
+        }
+        self.sync_keys();
     }
 
     pub fn grid_ticks(&self) -> Tick {
@@ -257,13 +332,8 @@ impl Project {
                 vel,
             });
         }
-        let key = Key {
-            root: 9,
-            scale: crate::theory::Scale::Minor,
-        };
-        for id in [piano, bass, lead] {
-            p.track_mut(id).unwrap().key_lock = Some(key);
-        }
+        p.key = Some(Key::new(9, crate::theory::Scale::Minor));
+        p.sync_keys();
         p.track_mut(lead).unwrap().fx.delay = 0.35;
         p
     }
