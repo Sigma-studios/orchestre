@@ -300,8 +300,9 @@ fn position_display(app: &OrchestreApp, ui: &mut Ui) {
     let t = app.position.max(0.0) as i64;
     let bar = t / ts.bar_ticks() + 1;
     let beat = (t % ts.bar_ticks()) / ts.beat_ticks() + 1;
-    let secs = t as f64 * app.project.seconds_per_tick();
-    let time = format!("{}:{:04.1}", (secs / 60.0) as u32, secs % 60.0);
+    let clock = |secs: f64| format!("{}:{:04.1}", (secs / 60.0) as u32, secs % 60.0);
+    let spt = app.project.seconds_per_tick();
+    let time = clock(t as f64 * spt);
     ui.label(
         RichText::new(format!("{bar:>3}.{beat}"))
             .monospace()
@@ -309,6 +310,12 @@ fn position_display(app: &OrchestreApp, ui: &mut Ui) {
             .strong(),
     )
     .on_hover_text(format!("Bar {bar}, beat {beat} ({time})"));
+    let song = app.project.length_bars as i64 * ts.bar_ticks();
+    ui.label(RichText::new(&time).monospace().color(theme::TEXT_DIM))
+        .on_hover_text(format!(
+            "Time from the start. The whole song lasts {}",
+            clock(song as f64 * spt)
+        ));
 }
 
 /// Horizontal level meter.
