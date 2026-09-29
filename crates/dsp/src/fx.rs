@@ -256,3 +256,53 @@ impl Ensemble {
         }
     }
 }
+
+/// Stereo phaser: six first-order all-pass stages swept by a slow LFO,
+/// with feedback, mixed with the dry signal to carve moving notches.
+pub struct Phaser {
+    z: [[f32; 6]; 2],
+    fb: [f32; 2],
+    phase: f32,
+    sr: f32,
+}
+
+impl Phaser {
+    pub fn new(sr: f32) -> Self {
+        Phaser {
+            z: [[0.0; 6]; 2],
+            fb: [0.0; 2],
+            phase: 0.0,
+            sr,
+        }
+    }
+
+    /// Process a block in place; `amount` 0..1. The sweep is updated once
+    /// per block (it moves slowly).
+    pub fn process(&mut self, l: &mut [f32], r: &mut [f32], amount: f32) {
+        let n = l.len();
+        let mut coef = [0.0f32; 2];
+        for (ch, c) in coef.iter_mut().enumerate() {
+            let lfo =
+                0.5 + 0.5 * (self.phase * TAU + ch as f32 * std::f32::consts::FRAC_PI_2).sin();
+            let f = 250.0 * (2.0f32).powf(lfo * 4.0);
+            let t = (std::f32::consts::PI * f / self.sr).tan();
+            *c = (t - 1.0) / (t + 1.0);
+        }
+        self.phase = (self.phase + 0.35 * n as f32 / self.sr).fract();
+        let feedback = 0.55 * amount;
+        for (ch, buf) in [l, r].into_iter().enumerate() {
+            let a = coef[ch];
+            let z = &mut self.z[ch];
+            for x in buf.iter_mut() {
+                let mut y = *x + self.fb[ch] * feedback;
+                for s in z.iter_mut() {
+                    let o = a * y + *s;
+                    *s = flush(y - a * o);
+                    y = o;
+                }
+                self.fb[ch] = flush(y);
+                *x = *x * (1.0 - 0.5 * amount) + y * 0.5 * amount;
+            }
+        }
+    }
+}

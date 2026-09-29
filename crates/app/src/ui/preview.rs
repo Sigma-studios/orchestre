@@ -9,12 +9,20 @@ use crate::app::OrchestreApp;
 /// across a menu doesn't fire a burst of sounds).
 const DELAY: f64 = 0.15;
 
+/// Something that can be heard from a menu.
+#[derive(Clone, Copy, Debug, PartialEq)]
+enum Item {
+    Choice(InstrumentChoice),
+    /// Index in "My sounds".
+    Mine(usize),
+}
+
 #[derive(Default)]
 pub struct PreviewState {
-    hovered: Option<InstrumentChoice>,
-    candidate: Option<InstrumentChoice>,
+    hovered: Option<Item>,
+    candidate: Option<Item>,
     since: f64,
-    playing: Option<InstrumentChoice>,
+    playing: Option<Item>,
 }
 
 impl PreviewState {
@@ -27,7 +35,14 @@ impl PreviewState {
 /// Call for each menu entry that can be previewed.
 pub fn hover(app: &mut OrchestreApp, resp: &egui::Response, choice: InstrumentChoice) {
     if resp.hovered() {
-        app.preview.hovered = Some(choice);
+        app.preview.hovered = Some(Item::Choice(choice));
+    }
+}
+
+/// Like [`hover`], for an entry of "My sounds".
+pub fn hover_mine(app: &mut OrchestreApp, resp: &egui::Response, index: usize) {
+    if resp.hovered() {
+        app.preview.hovered = Some(Item::Mine(index));
     }
 }
 
@@ -42,10 +57,21 @@ pub fn end_frame(app: &mut OrchestreApp) {
     match app.preview.candidate {
         Some(c) if app.preview.playing != Some(c) && now - app.preview.since >= DELAY => {
             app.preview.playing = Some(c);
-            app.send(Cmd::Preview {
-                instrument: c.instrument(),
-                notes: c.preview_notes(),
-            });
+            let cmd = match c {
+                Item::Choice(c) => Some(Cmd::Preview {
+                    instrument: c.instrument(),
+                    notes: c.preview_notes(),
+                    arp: c.default_arp(),
+                }),
+                Item::Mine(i) => app.my_sounds.get(i).map(|s| Cmd::Preview {
+                    instrument: s.instrument.clone(),
+                    notes: s.instrument.choice().preview_notes(),
+                    arp: s.arp,
+                }),
+            };
+            if let Some(cmd) = cmd {
+                app.send(cmd);
+            }
         }
         None if app.preview.playing.is_some() => {
             app.preview.playing = None;

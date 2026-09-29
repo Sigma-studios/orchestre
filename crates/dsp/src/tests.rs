@@ -392,3 +392,246 @@ fn an_edited_loop_carries_on_rather_than_starting_over() {
     }
     assert!(peak(&l) < 1e-3, "released: {}", peak(&l));
 }
+
+#[test]
+fn sync_osc_without_resets_matches_the_free_oscillator() {
+    use crate::osc::{Osc, SyncOsc, default_width};
+    use orchestre_core::Wave;
+    for wave in [Wave::Saw, Wave::Square, Wave::Pulse] {
+        let dt = 0.0173;
+        let (mut free, mut synced) = (Osc::default(), SyncOsc::default());
+        let w = default_width(wave);
+        let a: Vec<f32> = (0..500).map(|_| free.next(wave, dt, 0.0)).collect();
+        let b: Vec<f32> = (0..500).map(|_| synced.next(wave, dt, w, None)).collect();
+        for i in 1..500 {
+            assert!(
+                (a[i] - b[i]).abs() < 1e-3,
+                "{wave:?} differs at {i}: {} vs {}",
+                a[i],
+                b[i]
+            );
+        }
+    }
+}
+
+#[test]
+fn ladder_stays_stable_at_full_resonance() {
+    use crate::filter::Ladder;
+    let mut f = Ladder::default();
+    f.set(800.0, 1.0, SR as f32);
+    let mut peak = 0.0f32;
+    for i in 0..SR {
+        let x = if i % 200 < 100 { 1.0 } else { -1.0 };
+        let (a, b) = f.process(x);
+        assert!(a.is_finite() && b.is_finite());
+        peak = peak.max(a.abs());
+    }
+    assert!(peak < 8.0, "ladder blew up: {peak}");
+}
+
+#[test]
+fn acid_slides_only_between_overlapping_notes() {
+    let mut p = single_note(InstrumentChoice::Synth(SynthPreset::AcidBass), 40);
+    let t = &mut p.tracks[0];
+    let first = t.notes[0];
+    // Back to back (no slide), then overlapping (slide).
+    for (start, pitch) in [(PPQ, 43), (2 * PPQ - PPQ / 8, 47)] {
+        t.notes.push(Note {
+            id: first.id + start as u64,
+            start,
+            len: PPQ,
+            pitch,
+            vel: 1.0,
+        });
+    }
+    let out = render_song(&Song::from_project(&p), SR, 2.0);
+    check_clean(&out);
+    assert!(peak(&out) > 0.05);
+}
+
+#[test]
+fn arp_steps_up_through_held_notes() {
+    use crate::arp::{Arp, ArpEvent};
+    use orchestre_core::ArpParams;
+    let p = ArpParams {
+        on: true,
+        octaves: 2,
+        ..ArpParams::default()
+    };
+    let mut arp = Arp::default();
+    for pitch in [64, 60, 67] {
+        arp.note_on(pitch, 0.8, f64::INFINITY);
+    }
+    let step = PPQ as f64 / 4.0;
+    let mut played = Vec::new();
+    let mut offs = 0;
+    // Two beats in blocks of 10 ticks.
+    for b in 0..(2 * PPQ / 10) {
+        let from = (b * 10) as f64;
+        arp.process(&p, from, from + 10.0, step, &mut |e| match e {
+            ArpEvent::On { pitch, .. } => played.push(pitch),
+            ArpEvent::Off { .. } => offs += 1,
+        });
+    }
+    assert_eq!(played, [60, 64, 67, 72, 76, 79, 60, 64]);
+    assert!(offs >= 7);
+    arp.all_off();
+    arp.process(&p, 1000.0, 1010.0, step, &mut |_| {});
+    assert!(arp.is_idle());
+}
+
+#[test]
+fn volume_automation_silences_a_track() {
+    use orchestre_core::{AutoLane, AutoPoint, AutoTarget};
+    let mut p = single_note(InstrumentChoice::Synth(SynthPreset::Lead), 60);
+    p.tracks[0].automation.push(AutoLane {
+        target: AutoTarget::Volume,
+        points: vec![AutoPoint {
+            tick: 0,
+            value: 0.0,
+        }],
+    });
+    let out = render_song(&Song::from_project(&p), SR, 1.0);
+    assert!(peak(&out) < 1e-6);
+}
+
+#[test]
+fn pump_ducks_on_the_beat() {
+    let mut p = single_note(InstrumentChoice::Synth(SynthPreset::Pad), 60);
+    p.tracks[0].notes[0].len = 4 * PPQ;
+    let rms = |p: &Project, from: f32, to: f32| {
+        let out = render_song(&Song::from_project(p), SR, 0.0);
+        let (a, b) = (
+            (from * SR as f32) as usize * 2,
+            (to * SR as f32) as usize * 2,
+        );
+        (out[a..b].iter().map(|s| s * s).sum::<f32>() / (b - a) as f32).sqrt()
+    };
+    // 110 bpm: beat 3 starts at 1.09s; just after it vs. late in the beat.
+    let beat = 60.0 / 110.0;
+    let plain = rms(&p, 2.0 * beat + 0.03, 2.0 * beat + 0.08);
+    p.tracks[0].fx.pump = 1.0;
+    let ducked = rms(&p, 2.0 * beat + 0.03, 2.0 * beat + 0.08);
+    let late = rms(&p, 2.0 * beat + 0.45, 2.0 * beat + 0.5);
+    assert!(ducked < plain * 0.5, "not ducked: {ducked} vs {plain}");
+    assert!(late > ducked * 2.0, "did not recover: {late} vs {ducked}");
+}
+
+/// Energy of `x` (mono) at `freq`, by the Goertzel algorithm.
+fn energy_at(x: &[f32], freq: f32) -> f32 {
+    let w = 2.0 * std::f32::consts::PI * freq / SR as f32;
+    let c = 2.0 * w.cos();
+    let (mut s1, mut s2) = (0.0f32, 0.0f32);
+    for &v in x {
+        let s0 = v + c * s1 - s2;
+        s2 = s1;
+        s1 = s0;
+    }
+    (s1 * s1 + s2 * s2 - c * s1 * s2) / x.len() as f32
+}
+
+#[test]
+fn talk_box_vowels_shape_the_spectrum() {
+    use crate::talkbox::TalkBoxEngine;
+    use orchestre_core::{TalkBoxPreset, Vowel};
+    for vocoder in [false, true] {
+        // Energy near "ee"'s high second formant, relative to "oo"'s low one.
+        let ratio = |vowel: Vowel| {
+            let mut p = TalkBoxPreset::TalkBox.params();
+            p.vocoder = vocoder;
+            p.vowels = [vowel; 8];
+            p.vibrato = 0.0;
+            let mut e = TalkBoxEngine::new(p, SR as f32);
+            // 110 Hz: harmonics every 110 Hz, so both bands have partials.
+            e.note_on(45, 0.9, f64::INFINITY);
+            let mut mono = Vec::new();
+            for _ in 0..600 {
+                let (mut l, mut r) = ([0.0f32; 32], [0.0f32; 32]);
+                e.render(&mut l, &mut r);
+                mono.extend_from_slice(&l);
+            }
+            let tail = &mono[mono.len() / 2..];
+            let high: f32 = [2200.0, 2310.0, 2420.0]
+                .iter()
+                .map(|&f| energy_at(tail, f))
+                .sum();
+            let low: f32 = [770.0, 880.0, 990.0]
+                .iter()
+                .map(|&f| energy_at(tail, f))
+                .sum();
+            high / low
+        };
+        let (ee, oo) = (ratio(Vowel::Ee), ratio(Vowel::Oo));
+        assert!(ee > oo * 4.0, "vocoder={vocoder}: ee {ee} vs oo {oo}");
+    }
+}
+
+fn render_instrument(instrument: orchestre_core::Instrument, pitch: u8) -> Vec<f32> {
+    let mut p = single_note(InstrumentChoice::Piano, pitch);
+    p.tracks[0].instrument = instrument;
+    render_song(&Song::from_project(&p), SR, 8.0)
+}
+
+#[test]
+fn every_synth_preset_as_a_patch_sounds_and_stops() {
+    use orchestre_core::Instrument;
+    use orchestre_core::patch::Patch;
+    for preset in SynthPreset::ALL {
+        let patch = Patch::from_synth(&preset.params());
+        let out = render_instrument(Instrument::Patch(Box::new(patch)), 48);
+        check_clean(&out);
+        assert!(peak(&out) > 0.02, "{preset:?} patch is silent");
+        let secs = out.len() as f32 / 2.0 / SR as f32;
+        assert!(secs < 8.0, "{preset:?} patch never stops ({secs}s)");
+    }
+}
+
+#[test]
+fn patch_without_envelope_still_ends_notes() {
+    use orchestre_core::Instrument;
+    use orchestre_core::patch::{Module, Patch};
+    let mut patch = Patch {
+        nodes: Vec::new(),
+        cables: Vec::new(),
+        macros: Vec::new(),
+        mono: false,
+        glide: 0.0,
+        chorus: 0.0,
+        gain: 0.8,
+    };
+    let osc = patch.add(Module::new("Oscillator").unwrap(), [0.0, 0.0]);
+    let out = patch.add(Module::Output, [200.0, 0.0]);
+    assert!(patch.connect(osc, 0, out, 0));
+    let sound = render_instrument(Instrument::Patch(Box::new(patch)), 60);
+    check_clean(&sound);
+    assert!(peak(&sound) > 0.05);
+    let secs = sound.len() as f32 / 2.0 / SR as f32;
+    assert!(secs < 3.0, "note never ended ({secs}s)");
+}
+
+#[test]
+fn editing_a_patch_live_keeps_it_playing() {
+    use crate::patch::PatchEngine;
+    use orchestre_core::patch::{Module, Patch};
+    let mut patch = Patch::default();
+    let mut e = PatchEngine::new(patch.clone(), SR as f32);
+    e.note_on(60, 0.8, f64::INFINITY);
+    let run = |e: &mut PatchEngine| {
+        let mut p = 0.0f32;
+        for _ in 0..200 {
+            let (mut l, mut r) = ([0.0f32; 32], [0.0f32; 32]);
+            e.render(&mut l, &mut r);
+            p = p.max(peak(&l));
+        }
+        p
+    };
+    assert!(run(&mut e) > 0.02);
+    // A setting change: the held note carries on.
+    for n in &mut patch.nodes {
+        if let Module::Filter { cutoff, .. } = &mut n.module {
+            *cutoff = 500.0;
+        }
+    }
+    e.set_params(&patch);
+    assert!(run(&mut e) > 0.02, "note stopped after a settings change");
+}

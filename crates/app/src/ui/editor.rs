@@ -16,7 +16,10 @@ pub fn show(app: &mut OrchestreApp, ui: &mut Ui) {
         full.min,
         pos2(full.left() + HEADER_W - KEYS_W, full.bottom()),
     );
-    let roll = Rect::from_min_max(pos2(side.right(), full.top()), full.max);
+    let area = Rect::from_min_max(pos2(side.right(), full.top()), full.max);
+    let strip_h = crate::ui::automation::height(app);
+    let roll = Rect::from_min_max(area.min, pos2(area.right(), area.bottom() - strip_h));
+    let strip = Rect::from_min_max(pos2(area.left(), roll.bottom()), area.max);
 
     ui.painter().rect_filled(side, 0.0, theme::PANEL);
     let mut side_ui =
@@ -24,6 +27,7 @@ pub fn show(app: &mut OrchestreApp, ui: &mut Ui) {
     crate::ui::sidebar::show(app, &mut side_ui);
 
     crate::ui::roll::show(app, ui, roll);
+    crate::ui::automation::show(app, ui, strip);
     record_overlay(app, ui, roll);
     toast(app, ui, roll);
 }

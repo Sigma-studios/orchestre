@@ -1,7 +1,7 @@
 //! The engine-side view of a project, and the messages exchanged with it.
 
 use orchestre_core::sfx::{PlayOpts, Sound};
-use orchestre_core::{FxParams, Id, Instrument, PreviewNote, Project, Tick};
+use orchestre_core::{ArpParams, AutoLane, FxParams, Id, Instrument, PreviewNote, Project, Tick};
 use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
@@ -13,7 +13,7 @@ pub struct SongNote {
 }
 
 /// Everything about a track except its notes; can be updated live.
-#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct TrackParams {
     pub id: Id,
     pub instrument: Instrument,
@@ -22,6 +22,8 @@ pub struct TrackParams {
     pub pan: f32,
     /// False when muted, or when another track is soloed.
     pub audible: bool,
+    pub arp: ArpParams,
+    pub automation: Vec<AutoLane>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -77,11 +79,13 @@ impl Song {
                 SongTrack {
                     params: TrackParams {
                         id: t.id,
-                        instrument: t.instrument,
+                        instrument: t.instrument.clone(),
                         fx: t.fx,
                         volume: t.volume,
                         pan: t.pan,
                         audible: !t.mute && (!any_solo || t.solo),
+                        arp: t.arp,
+                        automation: t.automation.clone(),
                     },
                     notes,
                 }
@@ -138,6 +142,7 @@ pub enum Cmd {
     Preview {
         instrument: Instrument,
         notes: Vec<PreviewNote>,
+        arp: ArpParams,
     },
     StopPreview,
     /// Play a sound effect once, on top of whatever is playing.

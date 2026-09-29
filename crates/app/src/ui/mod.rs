@@ -1,6 +1,8 @@
+pub mod automation;
 pub mod dialogs;
 pub mod editor;
 pub mod lanes;
+pub mod patch;
 pub mod preview;
 pub mod roll;
 pub mod sfx;

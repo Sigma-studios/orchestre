@@ -50,6 +50,209 @@ impl Adsr {
     }
 }
 
+/// Filter models of the classic synth.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub enum FilterType {
+    /// 12 dB/oct state-variable lowpass: smooth, Oberheim-like.
+    #[default]
+    Smooth,
+    /// 24 dB/oct transistor ladder: fat, Moog-like.
+    Ladder,
+    /// 18 dB/oct: the squelchy acid-bass filter (TB-303-like).
+    Acid,
+    HighPass,
+    BandPass,
+}
+
+impl FilterType {
+    pub const ALL: [FilterType; 5] = [
+        FilterType::Smooth,
+        FilterType::Ladder,
+        FilterType::Acid,
+        FilterType::HighPass,
+        FilterType::BandPass,
+    ];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            FilterType::Smooth => "Smooth (12 dB)",
+            FilterType::Ladder => "Fat ladder (24 dB)",
+            FilterType::Acid => "Acid (18 dB)",
+            FilterType::HighPass => "High-pass",
+            FilterType::BandPass => "Band-pass",
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub enum LfoWave {
+    #[default]
+    Sine,
+    Triangle,
+    Square,
+    /// Falling saw.
+    SawDown,
+    /// Rising saw.
+    SawUp,
+    /// A new random level every cycle (sample & hold).
+    Random,
+}
+
+impl LfoWave {
+    pub const ALL: [LfoWave; 6] = [
+        LfoWave::Sine,
+        LfoWave::Triangle,
+        LfoWave::Square,
+        LfoWave::SawDown,
+        LfoWave::SawUp,
+        LfoWave::Random,
+    ];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            LfoWave::Sine => "Sine",
+            LfoWave::Triangle => "Triangle",
+            LfoWave::Square => "Square",
+            LfoWave::SawDown => "Saw down",
+            LfoWave::SawUp => "Saw up",
+            LfoWave::Random => "Random",
+        }
+    }
+}
+
+/// Note values for tempo-synced LFOs, in beats per cycle.
+pub const LFO_BEATS: [(f32, &str); 9] = [
+    (0.0, "Free (Hz)"),
+    (0.125, "1/32"),
+    (0.25, "1/16"),
+    (1.0 / 3.0, "1/8 triplet"),
+    (0.5, "1/8"),
+    (1.0, "1/4"),
+    (2.0, "1/2"),
+    (4.0, "1 bar"),
+    (8.0, "2 bars"),
+];
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub enum ModSource {
+    #[default]
+    None,
+    Lfo,
+    FilterEnv,
+    AmpEnv,
+    Velocity,
+    /// Note height: 0 at middle C, ±1 per octave.
+    KeyTrack,
+    /// A random value per note.
+    Random,
+}
+
+impl ModSource {
+    pub const ALL: [ModSource; 7] = [
+        ModSource::None,
+        ModSource::Lfo,
+        ModSource::FilterEnv,
+        ModSource::AmpEnv,
+        ModSource::Velocity,
+        ModSource::KeyTrack,
+        ModSource::Random,
+    ];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            ModSource::None => "—",
+            ModSource::Lfo => "LFO",
+            ModSource::FilterEnv => "Filter env",
+            ModSource::AmpEnv => "Volume env",
+            ModSource::Velocity => "Velocity",
+            ModSource::KeyTrack => "Key track",
+            ModSource::Random => "Random",
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub enum ModTarget {
+    #[default]
+    None,
+    Pitch,
+    Osc2Pitch,
+    Cutoff,
+    Resonance,
+    PulseWidth,
+    Fm,
+    OscMix,
+    Level,
+    Noise,
+}
+
+impl ModTarget {
+    pub const ALL: [ModTarget; 10] = [
+        ModTarget::None,
+        ModTarget::Pitch,
+        ModTarget::Osc2Pitch,
+        ModTarget::Cutoff,
+        ModTarget::Resonance,
+        ModTarget::PulseWidth,
+        ModTarget::Fm,
+        ModTarget::OscMix,
+        ModTarget::Level,
+        ModTarget::Noise,
+    ];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            ModTarget::None => "—",
+            ModTarget::Pitch => "Pitch",
+            ModTarget::Osc2Pitch => "Wave 2 pitch",
+            ModTarget::Cutoff => "Brightness",
+            ModTarget::Resonance => "Resonance",
+            ModTarget::PulseWidth => "Pulse width",
+            ModTarget::Fm => "FM",
+            ModTarget::OscMix => "Mix 1 ↔ 2",
+            ModTarget::Level => "Level",
+            ModTarget::Noise => "Noise",
+        }
+    }
+
+    /// What an amount of 1 means, in the target's units (semitones for
+    /// pitch, octaves for brightness).
+    pub fn scale(self) -> f32 {
+        match self {
+            ModTarget::None => 0.0,
+            ModTarget::Pitch => 12.0,
+            ModTarget::Osc2Pitch => 24.0,
+            ModTarget::Cutoff => 5.0,
+            ModTarget::Resonance => 1.0,
+            ModTarget::PulseWidth => 0.45,
+            ModTarget::Fm => 3.0,
+            ModTarget::OscMix => 1.0,
+            ModTarget::Level => 1.0,
+            ModTarget::Noise => 1.0,
+        }
+    }
+}
+
+/// One modulation route: `source` moves `target` by `amount` (-1..1).
+#[derive(Clone, Copy, Debug, PartialEq, Default, Serialize, Deserialize)]
+pub struct ModSlot {
+    pub source: ModSource,
+    pub target: ModTarget,
+    pub amount: f32,
+}
+
+impl ModSlot {
+    pub const fn new(source: ModSource, target: ModTarget, amount: f32) -> Self {
+        ModSlot {
+            source,
+            target,
+            amount,
+        }
+    }
+}
+
+pub const MOD_SLOTS: usize = 3;
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum SynthPreset {
     Lead,
@@ -66,10 +269,26 @@ pub enum SynthPreset {
     Flute,
     Strings,
     ArpPluck,
+    AcidBass,
+    SquelchLead,
+    FatBass,
+    FatLead,
+    SyncLead,
+    PwmPad,
+    StringMachine,
+    PolyBrass,
+    FilmBrass,
+    Hoover,
+    ReeseBass,
+    FmBass,
+    DiscoBass,
+    DarkArp,
+    HouseOrgan,
+    HouseStab,
 }
 
 impl SynthPreset {
-    pub const ALL: [SynthPreset; 14] = [
+    pub const ALL: [SynthPreset; 30] = [
         SynthPreset::Lead,
         SynthPreset::Bass,
         SynthPreset::SubBass,
@@ -84,6 +303,22 @@ impl SynthPreset {
         SynthPreset::Flute,
         SynthPreset::Strings,
         SynthPreset::ArpPluck,
+        SynthPreset::AcidBass,
+        SynthPreset::SquelchLead,
+        SynthPreset::FatBass,
+        SynthPreset::FatLead,
+        SynthPreset::SyncLead,
+        SynthPreset::PwmPad,
+        SynthPreset::StringMachine,
+        SynthPreset::PolyBrass,
+        SynthPreset::FilmBrass,
+        SynthPreset::Hoover,
+        SynthPreset::ReeseBass,
+        SynthPreset::FmBass,
+        SynthPreset::DiscoBass,
+        SynthPreset::DarkArp,
+        SynthPreset::HouseOrgan,
+        SynthPreset::HouseStab,
     ];
 
     pub fn label(self) -> &'static str {
@@ -102,6 +337,22 @@ impl SynthPreset {
             SynthPreset::Flute => "Flute",
             SynthPreset::Strings => "Strings",
             SynthPreset::ArpPluck => "Arp Pluck",
+            SynthPreset::AcidBass => "Acid Bass",
+            SynthPreset::SquelchLead => "Squelch Lead",
+            SynthPreset::FatBass => "Fat Bass",
+            SynthPreset::FatLead => "Fat Lead",
+            SynthPreset::SyncLead => "Sync Lead",
+            SynthPreset::PwmPad => "PWM Pad",
+            SynthPreset::StringMachine => "String Machine",
+            SynthPreset::PolyBrass => "Poly Brass",
+            SynthPreset::FilmBrass => "Film Brass",
+            SynthPreset::Hoover => "Rave Hoover",
+            SynthPreset::ReeseBass => "Reese Bass",
+            SynthPreset::FmBass => "FM Bass",
+            SynthPreset::DiscoBass => "Disco Bass",
+            SynthPreset::DarkArp => "Dark Arp",
+            SynthPreset::HouseOrgan => "House Organ",
+            SynthPreset::HouseStab => "House Stab",
         }
     }
 
@@ -121,6 +372,22 @@ impl SynthPreset {
             SynthPreset::Flute => "Soft, breathy whistle",
             SynthPreset::Strings => "Lush string section",
             SynthPreset::ArpPluck => "Bouncy plucks for fast patterns",
+            SynthPreset::AcidBass => "Squelchy, sliding 303-style bass",
+            SynthPreset::SquelchLead => "Gritty, distorted wah riff (Da Funk style)",
+            SynthPreset::FatBass => "Thick, warm Moog-style bass",
+            SynthPreset::FatLead => "Singing Moog-style solo lead",
+            SynthPreset::SyncLead => "Tearing 80s lead that sweeps on each note",
+            SynthPreset::PwmPad => "Warm, shimmering Juno-style pad",
+            SynthPreset::StringMachine => "70s string ensemble, like Oxygène",
+            SynthPreset::PolyBrass => "Bright 80s synth-brass chords",
+            SynthPreset::FilmBrass => "Slow, swelling sci-fi brass",
+            SynthPreset::Hoover => "Huge, whooping 90s rave sound",
+            SynthPreset::ReeseBass => "Dark, moving drum & bass bass",
+            SynthPreset::FmBass => "Punchy, rubbery 80s digital bass",
+            SynthPreset::DiscoBass => "Tight synth bass for disco pulses (add echo)",
+            SynthPreset::DarkArp => "Moody 80s arpeggio: hold a chord",
+            SynthPreset::HouseOrgan => "Punchy 90s house organ",
+            SynthPreset::HouseStab => "Short chord stabs for dance music",
         }
     }
 
@@ -360,6 +627,315 @@ impl SynthPreset {
                 chorus: 0.3,
                 ..base
             },
+            SynthPreset::AcidBass => SynthParams {
+                preset: self,
+                osc1: Wave::Saw,
+                osc_mix: 0.0,
+                filter_type: FilterType::Acid,
+                cutoff: 330.0,
+                resonance: 0.8,
+                filter_env: 3.2,
+                filter_adsr: Adsr::new(0.001, 0.28, 0.0, 0.1),
+                amp: Adsr::new(0.002, 0.3, 0.85, 0.04),
+                accent: 0.8,
+                drive: 0.15,
+                mono: true,
+                slide_only: true,
+                glide: 0.06,
+                width: 0.0,
+                gain: 0.5,
+                ..base
+            },
+            SynthPreset::SquelchLead => SynthParams {
+                preset: self,
+                osc1: Wave::Saw,
+                osc2: Wave::Square,
+                osc2_semitones: -12,
+                osc_mix: 0.2,
+                filter_type: FilterType::Acid,
+                cutoff: 550.0,
+                resonance: 0.75,
+                filter_env: 2.8,
+                filter_adsr: Adsr::new(0.002, 0.3, 0.15, 0.12),
+                amp: Adsr::new(0.002, 0.3, 0.9, 0.08),
+                accent: 0.6,
+                // Most of the character is the fuzz after the filter.
+                drive: 0.85,
+                mono: true,
+                slide_only: true,
+                glide: 0.05,
+                width: 0.0,
+                gain: 0.36,
+                ..base
+            },
+            SynthPreset::FatBass => SynthParams {
+                preset: self,
+                osc1: Wave::Saw,
+                osc2: Wave::Square,
+                osc2_semitones: -12,
+                osc2_detune: 4.0,
+                osc_mix: 0.45,
+                osc3: Wave::Saw,
+                osc3_detune: -6.0,
+                osc3_level: 0.4,
+                filter_type: FilterType::Ladder,
+                cutoff: 260.0,
+                resonance: 0.3,
+                filter_env: 3.0,
+                filter_adsr: Adsr::new(0.002, 0.35, 0.2, 0.15),
+                amp: Adsr::new(0.002, 0.4, 0.8, 0.08),
+                drive: 0.2,
+                mono: true,
+                glide: 0.04,
+                width: 0.0,
+                gain: 0.65,
+                ..base
+            },
+            SynthPreset::FatLead => SynthParams {
+                preset: self,
+                osc1: Wave::Saw,
+                osc2: Wave::Saw,
+                osc2_detune: 7.0,
+                osc_mix: 0.5,
+                osc3: Wave::Square,
+                osc3_semitones: -12,
+                osc3_level: 0.3,
+                filter_type: FilterType::Ladder,
+                cutoff: 1200.0,
+                resonance: 0.35,
+                filter_env: 2.0,
+                filter_adsr: Adsr::new(0.01, 0.4, 0.5, 0.2),
+                amp: Adsr::new(0.005, 0.3, 0.85, 0.2),
+                lfo_rate: 5.5,
+                lfo_pitch: 0.1,
+                drive: 0.25,
+                mono: true,
+                glide: 0.08,
+                gain: 0.65,
+                ..base
+            },
+            SynthPreset::SyncLead => SynthParams {
+                preset: self,
+                osc1: Wave::Saw,
+                osc2: Wave::Saw,
+                osc2_semitones: 7,
+                osc_mix: 0.85,
+                sync: true,
+                env_pitch2: 18.0,
+                cutoff: 3500.0,
+                resonance: 0.2,
+                filter_env: 1.0,
+                filter_adsr: Adsr::new(0.001, 0.6, 0.2, 0.3),
+                amp: Adsr::new(0.005, 0.3, 0.85, 0.2),
+                mono: true,
+                glide: 0.03,
+                gain: 0.7,
+                ..base
+            },
+            SynthPreset::PwmPad => SynthParams {
+                preset: self,
+                osc1: Wave::Square,
+                osc2: Wave::Saw,
+                osc_mix: 0.3,
+                pwm: 0.7,
+                sub: 0.3,
+                lfo_rate: 0.8,
+                filter_type: FilterType::Ladder,
+                cutoff: 2200.0,
+                resonance: 0.1,
+                filter_env: 0.6,
+                filter_adsr: Adsr::new(0.5, 1.2, 0.6, 1.0),
+                amp: Adsr::new(0.35, 1.0, 0.85, 1.2),
+                chorus: 0.9,
+                width: 0.6,
+                gain: 0.7,
+                ..base
+            },
+            SynthPreset::StringMachine => SynthParams {
+                preset: self,
+                osc1: Wave::Saw,
+                osc2: Wave::Saw,
+                osc2_semitones: 12,
+                osc_mix: 0.4,
+                cutoff: 3500.0,
+                resonance: 0.0,
+                filter_env: 0.0,
+                amp: Adsr::new(0.25, 0.3, 1.0, 0.8),
+                chorus: 1.0,
+                width: 0.5,
+                gain: 0.6,
+                ..base
+            },
+            SynthPreset::PolyBrass => SynthParams {
+                preset: self,
+                osc1: Wave::Saw,
+                osc2: Wave::Saw,
+                osc2_detune: 12.0,
+                osc_mix: 0.5,
+                cutoff: 900.0,
+                resonance: 0.1,
+                filter_env: 2.8,
+                filter_adsr: Adsr::new(0.02, 0.5, 0.55, 0.3),
+                amp: Adsr::new(0.005, 0.5, 0.85, 0.3),
+                chorus: 0.35,
+                width: 0.6,
+                gain: 0.6,
+                ..base
+            },
+            SynthPreset::FilmBrass => SynthParams {
+                preset: self,
+                osc1: Wave::Saw,
+                osc2: Wave::Pulse,
+                osc2_detune: 8.0,
+                osc_mix: 0.4,
+                cutoff: 500.0,
+                resonance: 0.25,
+                filter_env: 2.6,
+                filter_adsr: Adsr::new(0.35, 1.2, 0.6, 1.5),
+                amp: Adsr::new(0.15, 1.0, 0.9, 1.8),
+                lfo_rate: 5.0,
+                lfo_pitch: 0.08,
+                chorus: 0.5,
+                width: 0.8,
+                gain: 0.65,
+                ..base
+            },
+            SynthPreset::Hoover => SynthParams {
+                preset: self,
+                osc1: Wave::Saw,
+                osc2: Wave::Pulse,
+                osc2_semitones: -12,
+                osc_mix: 0.4,
+                unison: 5,
+                unison_spread: 35.0,
+                pwm: 0.6,
+                lfo_rate: 3.0,
+                // The "whoop": each note scoops up into pitch.
+                bend: -5.0,
+                bend_time: 0.12,
+                cutoff: 3000.0,
+                resonance: 0.1,
+                filter_env: 0.5,
+                amp: Adsr::new(0.01, 0.3, 0.9, 0.25),
+                chorus: 0.8,
+                width: 1.0,
+                mono: true,
+                glide: 0.15,
+                gain: 0.5,
+                ..base
+            },
+            SynthPreset::ReeseBass => SynthParams {
+                preset: self,
+                osc1: Wave::Saw,
+                osc2: Wave::Saw,
+                osc2_detune: 25.0,
+                osc_mix: 0.5,
+                unison: 2,
+                unison_spread: 18.0,
+                sub: 0.4,
+                filter_type: FilterType::Ladder,
+                cutoff: 350.0,
+                resonance: 0.2,
+                filter_env: 0.8,
+                lfo_rate: 0.25,
+                lfo_cutoff: 0.8,
+                amp: Adsr::new(0.005, 0.3, 0.9, 0.12),
+                drive: 0.3,
+                width: 0.5,
+                mono: true,
+                glide: 0.03,
+                gain: 0.7,
+                ..base
+            },
+            SynthPreset::FmBass => SynthParams {
+                preset: self,
+                osc1: Wave::Sine,
+                osc2: Wave::Sine,
+                osc_mix: 0.0,
+                fm: 0.3,
+                cutoff: 9000.0,
+                resonance: 0.0,
+                filter_env: 0.0,
+                // The filter envelope drives the FM depth: a bright "bwow" attack.
+                filter_adsr: Adsr::new(0.001, 0.25, 0.1, 0.1),
+                mods: [
+                    ModSlot::new(ModSource::FilterEnv, ModTarget::Fm, 0.9),
+                    ModSlot::new(ModSource::Velocity, ModTarget::Fm, 0.3),
+                    ModSlot::default(),
+                ],
+                amp: Adsr::new(0.001, 0.8, 0.5, 0.1),
+                width: 0.0,
+                mono: true,
+                gain: 0.85,
+                ..base
+            },
+            SynthPreset::DiscoBass => SynthParams {
+                preset: self,
+                osc1: Wave::Saw,
+                osc_mix: 0.0,
+                filter_type: FilterType::Ladder,
+                cutoff: 500.0,
+                resonance: 0.35,
+                filter_env: 3.0,
+                filter_adsr: Adsr::new(0.001, 0.15, 0.1, 0.1),
+                amp: Adsr::new(0.001, 0.25, 0.3, 0.08),
+                width: 0.0,
+                gain: 0.85,
+                ..base
+            },
+            SynthPreset::DarkArp => SynthParams {
+                preset: self,
+                osc1: Wave::Saw,
+                osc2: Wave::Square,
+                osc2_detune: 6.0,
+                osc_mix: 0.4,
+                filter_type: FilterType::Ladder,
+                cutoff: 700.0,
+                resonance: 0.4,
+                filter_env: 2.5,
+                filter_adsr: Adsr::new(0.001, 0.2, 0.15, 0.2),
+                amp: Adsr::new(0.002, 0.3, 0.6, 0.25),
+                chorus: 0.3,
+                width: 0.5,
+                gain: 0.95,
+                ..base
+            },
+            SynthPreset::HouseOrgan => SynthParams {
+                preset: self,
+                osc1: Wave::Sine,
+                osc2: Wave::Square,
+                osc2_semitones: 12,
+                osc_mix: 0.3,
+                fm: 0.6,
+                osc3: Wave::Sine,
+                osc3_semitones: 19,
+                osc3_level: 0.25,
+                cutoff: 5000.0,
+                resonance: 0.0,
+                filter_env: 1.0,
+                filter_adsr: Adsr::new(0.001, 0.2, 0.2, 0.1),
+                amp: Adsr::new(0.001, 0.35, 0.35, 0.1),
+                width: 0.3,
+                gain: 0.75,
+                ..base
+            },
+            SynthPreset::HouseStab => SynthParams {
+                preset: self,
+                osc1: Wave::Saw,
+                osc2: Wave::Square,
+                osc2_detune: 10.0,
+                osc_mix: 0.5,
+                filter_type: FilterType::Ladder,
+                cutoff: 800.0,
+                resonance: 0.35,
+                filter_env: 3.5,
+                filter_adsr: Adsr::new(0.001, 0.18, 0.0, 0.15),
+                amp: Adsr::new(0.001, 0.3, 0.0, 0.2),
+                chorus: 0.3,
+                width: 0.6,
+                gain: 1.1,
+                ..base
+            },
         }
     }
 }
@@ -412,6 +988,54 @@ pub struct SynthParams {
     /// Stereo chorus amount, 0..1.
     #[serde(default)]
     pub chorus: f32,
+    #[serde(default)]
+    pub filter_type: FilterType,
+    /// Distortion after the filter, like a pedal, 0..1.
+    #[serde(default)]
+    pub drive: f32,
+    /// Wave 2 restarts with every cycle of wave 1 (hard sync).
+    #[serde(default)]
+    pub sync: bool,
+    /// Filter envelope → wave 2 pitch, in semitones (the sync sweep).
+    #[serde(default)]
+    pub env_pitch2: f32,
+    /// LFO → pulse width of square and pulse waves, 0..1.
+    #[serde(default)]
+    pub pwm: f32,
+    /// Ring modulation (wave 1 × wave 2) mixed in, 0..1.
+    #[serde(default)]
+    pub ring: f32,
+    /// Third oscillator, not stacked by unison. Level 0 = off.
+    #[serde(default = "default_osc3")]
+    pub osc3: Wave,
+    #[serde(default)]
+    pub osc3_semitones: i8,
+    /// Cents.
+    #[serde(default)]
+    pub osc3_detune: f32,
+    #[serde(default)]
+    pub osc3_level: f32,
+    #[serde(default)]
+    pub lfo_wave: LfoWave,
+    /// LFO cycle length in beats; 0 = free-running at `lfo_rate`. Synced
+    /// LFOs restart with each note.
+    #[serde(default)]
+    pub lfo_beats: f32,
+    /// LFO → volume (tremolo), 0..1.
+    #[serde(default)]
+    pub lfo_amp: f32,
+    /// Loud notes (velocity above ~0.75) open the filter and hit harder, 0..1.
+    #[serde(default)]
+    pub accent: f32,
+    /// Mono: glide only between overlapping notes (acid-style slides).
+    #[serde(default)]
+    pub slide_only: bool,
+    #[serde(default)]
+    pub mods: [ModSlot; MOD_SLOTS],
+}
+
+fn default_osc3() -> Wave {
+    Wave::Saw
 }
 
 impl Default for SynthParams {
@@ -444,6 +1068,22 @@ impl Default for SynthParams {
             bend: 0.0,
             bend_time: 0.0,
             chorus: 0.0,
+            filter_type: FilterType::Smooth,
+            drive: 0.0,
+            sync: false,
+            env_pitch2: 0.0,
+            pwm: 0.0,
+            ring: 0.0,
+            osc3: Wave::Saw,
+            osc3_semitones: 0,
+            osc3_detune: 0.0,
+            osc3_level: 0.0,
+            lfo_wave: LfoWave::Sine,
+            lfo_beats: 0.0,
+            lfo_amp: 0.0,
+            accent: 0.0,
+            slide_only: false,
+            mods: [ModSlot::default(); MOD_SLOTS],
         }
     }
 }
@@ -957,7 +1597,166 @@ impl Default for ChoirParams {
     }
 }
 
+/// Vowels a talk box or vocoder can "sing".
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub enum Vowel {
+    Oo,
+    Oh,
+    #[default]
+    Ah,
+    Uh,
+    Ae,
+    Eh,
+    Ee,
+}
+
+impl Vowel {
+    pub const ALL: [Vowel; 7] = [
+        Vowel::Oo,
+        Vowel::Oh,
+        Vowel::Ah,
+        Vowel::Uh,
+        Vowel::Ae,
+        Vowel::Eh,
+        Vowel::Ee,
+    ];
+
+    pub fn label(self) -> &'static str {
+        crate::sfx::VOWEL_NAMES[self as usize].0
+    }
+
+    /// (openness, frontness), see [`crate::sfx::vowel_formants`].
+    pub fn shape(self) -> (f32, f32) {
+        let v = crate::sfx::VOWEL_NAMES[self as usize];
+        (v.1, v.2)
+    }
+}
+
+pub const MAX_VOWELS: usize = 8;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum TalkBoxPreset {
+    TalkBox,
+    RobotVoice,
+    VocoderChoir,
+}
+
+impl TalkBoxPreset {
+    pub const ALL: [TalkBoxPreset; 3] = [
+        TalkBoxPreset::TalkBox,
+        TalkBoxPreset::RobotVoice,
+        TalkBoxPreset::VocoderChoir,
+    ];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            TalkBoxPreset::TalkBox => "Talk Box",
+            TalkBoxPreset::RobotVoice => "Robot Voice",
+            TalkBoxPreset::VocoderChoir => "Vocoder Choir",
+        }
+    }
+
+    pub fn description(self) -> &'static str {
+        match self {
+            TalkBoxPreset::TalkBox => "A synth that talks: \"wah-wee-woo\" funk lines",
+            TalkBoxPreset::RobotVoice => "Vocoder robot singing \"a-round-the-world\"",
+            TalkBoxPreset::VocoderChoir => "Chords sung by a choir of robots",
+        }
+    }
+
+    pub fn params(self) -> TalkBoxParams {
+        use Vowel::*;
+        let base = TalkBoxParams::default();
+        match self {
+            TalkBoxPreset::TalkBox => base,
+            TalkBoxPreset::RobotVoice => TalkBoxParams {
+                preset: self,
+                vocoder: true,
+                vowels: [Uh, Ah, Uh, Oh, Uh, Ah, Uh, Oh],
+                steps: 4,
+                mouth: 0.5,
+                mouth_time: 0.07,
+                noise: 0.15,
+                mono: true,
+                glide: 0.03,
+                vibrato: 0.0,
+                chorus: 0.3,
+                ..base
+            },
+            TalkBoxPreset::VocoderChoir => TalkBoxParams {
+                preset: self,
+                vocoder: true,
+                vowels: [Ah, Oo, Ah, Eh, Ah, Oo, Ah, Eh],
+                steps: 2,
+                mouth: 0.3,
+                mouth_time: 0.2,
+                noise: 0.1,
+                mono: false,
+                glide: 0.0,
+                vibrato: 0.2,
+                amp: Adsr::new(0.08, 0.3, 0.9, 0.6),
+                chorus: 0.9,
+                gain: 0.8,
+                ..base
+            },
+        }
+    }
+}
+
+/// A synth played through a "mouth": the talk box (formant filters on the
+/// synth) or a vocoder (a bank of band filters, the robot sound). Each new
+/// note sings the next vowel of `vowels`.
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+pub struct TalkBoxParams {
+    pub preset: TalkBoxPreset,
+    /// Vocoder bands instead of smooth talk-box formants.
+    pub vocoder: bool,
+    pub vowels: [Vowel; MAX_VOWELS],
+    /// How many of `vowels` are used, 1..=8.
+    pub steps: u8,
+    /// How far the mouth closes between notes ("wah"), 0..1.
+    pub mouth: f32,
+    /// Seconds for the mouth to open.
+    pub mouth_time: f32,
+    /// Formant shift in semitones: down is a bigger, deeper "mouth".
+    pub shift: f32,
+    pub wave: Wave,
+    /// Breath and "s" sounds, 0..1.
+    pub noise: f32,
+    pub vibrato: f32,
+    pub mono: bool,
+    pub glide: f32,
+    pub amp: Adsr,
+    pub chorus: f32,
+    pub octave: i8,
+    pub gain: f32,
+}
+
+impl Default for TalkBoxParams {
+    fn default() -> Self {
+        use Vowel::*;
+        TalkBoxParams {
+            preset: TalkBoxPreset::TalkBox,
+            vocoder: false,
+            vowels: [Ah, Oo, Ee, Oh, Ah, Ee, Oo, Ah],
+            steps: 4,
+            mouth: 0.8,
+            mouth_time: 0.12,
+            shift: 0.0,
+            wave: Wave::Saw,
+            noise: 0.0,
+            vibrato: 0.15,
+            mono: true,
+            glide: 0.05,
+            amp: Adsr::new(0.01, 0.2, 0.9, 0.12),
+            chorus: 0.0,
+            octave: 0,
+            gain: 0.8,
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub enum Instrument {
     Synth(SynthParams),
     Drums(DrumParams),
@@ -967,6 +1766,9 @@ pub enum Instrument {
     Mallets(MalletParams),
     Pluck(PluckParams),
     Choir(ChoirParams),
+    TalkBox(TalkBoxParams),
+    /// A modular patch (the expert patch editor).
+    Patch(Box<crate::patch::Patch>),
 }
 
 impl Instrument {
@@ -985,6 +1787,8 @@ impl Instrument {
             Instrument::Mallets(p) => InstrumentChoice::Mallet(p.kind),
             Instrument::Pluck(p) => InstrumentChoice::Pluck(p.kind),
             Instrument::Choir(_) => InstrumentChoice::Choir,
+            Instrument::TalkBox(p) => InstrumentChoice::TalkBox(p.preset),
+            Instrument::Patch(_) => InstrumentChoice::Patch,
         }
     }
 
@@ -1021,6 +1825,8 @@ impl Instrument {
                 }
             }
             Instrument::Choir(p) => p.release,
+            Instrument::TalkBox(p) => p.amp.release + p.mouth_time,
+            Instrument::Patch(p) => p.tail_seconds(),
         }
     }
 }
@@ -1035,10 +1841,11 @@ pub enum Category {
     Bass,
     Leads,
     Pads,
+    Voices,
 }
 
 impl Category {
-    pub const ALL: [Category; 7] = [
+    pub const ALL: [Category; 8] = [
         Category::Drums,
         Category::Keys,
         Category::Plucked,
@@ -1046,6 +1853,7 @@ impl Category {
         Category::Bass,
         Category::Leads,
         Category::Pads,
+        Category::Voices,
     ];
 
     pub fn label(self) -> &'static str {
@@ -1056,7 +1864,8 @@ impl Category {
             Category::Mallets => "Mallets",
             Category::Bass => "Bass",
             Category::Leads => "Leads",
-            Category::Pads => "Pads & choir",
+            Category::Pads => "Pads",
+            Category::Voices => "Voices & robots",
         }
     }
 }
@@ -1072,6 +1881,9 @@ pub enum InstrumentChoice {
     Mallet(MalletKind),
     Pluck(PluckKind),
     Choir,
+    TalkBox(TalkBoxPreset),
+    /// A modular patch. Not in the menus: made in the patch editor.
+    Patch,
 }
 
 impl InstrumentChoice {
@@ -1084,6 +1896,7 @@ impl InstrumentChoice {
         v.extend(MalletKind::ALL.map(C::Mallet));
         v.extend(SynthPreset::ALL.map(C::Synth));
         v.push(C::Choir);
+        v.extend(TalkBoxPreset::ALL.map(C::TalkBox));
         Category::ALL
             .iter()
             .flat_map(|&cat| v.iter().copied().filter(move |c| c.category() == cat))
@@ -1100,13 +1913,31 @@ impl InstrumentChoice {
             InstrumentChoice::Mallet(_) => Category::Mallets,
             InstrumentChoice::Pluck(PluckKind::BassGuitar) => Category::Bass,
             InstrumentChoice::Pluck(_) => Category::Plucked,
-            InstrumentChoice::Choir => Category::Pads,
+            InstrumentChoice::Choir | InstrumentChoice::TalkBox(_) => Category::Voices,
+            InstrumentChoice::Patch => Category::Leads,
             InstrumentChoice::Synth(p) => match p {
-                S::Bell => Category::Keys,
-                S::Pluck | S::ArpPluck => Category::Plucked,
-                S::Bass | S::SubBass | S::Bass808 | S::WobbleBass => Category::Bass,
-                S::Lead | S::Chiptune | S::Brass | S::Flute => Category::Leads,
-                S::Pad | S::Supersaw | S::Strings => Category::Pads,
+                S::Bell | S::PolyBrass | S::HouseOrgan | S::HouseStab => Category::Keys,
+                S::Pluck | S::ArpPluck | S::DarkArp => Category::Plucked,
+                S::Bass
+                | S::SubBass
+                | S::Bass808
+                | S::WobbleBass
+                | S::AcidBass
+                | S::FatBass
+                | S::ReeseBass
+                | S::FmBass
+                | S::DiscoBass => Category::Bass,
+                S::Lead
+                | S::Chiptune
+                | S::Brass
+                | S::Flute
+                | S::SquelchLead
+                | S::FatLead
+                | S::SyncLead
+                | S::Hoover => Category::Leads,
+                S::Pad | S::Supersaw | S::Strings | S::PwmPad | S::StringMachine | S::FilmBrass => {
+                    Category::Pads
+                }
             },
         }
     }
@@ -1121,6 +1952,8 @@ impl InstrumentChoice {
             InstrumentChoice::Mallet(k) => k.label(),
             InstrumentChoice::Pluck(k) => k.label(),
             InstrumentChoice::Choir => "Choir",
+            InstrumentChoice::TalkBox(p) => p.label(),
+            InstrumentChoice::Patch => "Custom Patch",
         }
     }
 
@@ -1134,6 +1967,8 @@ impl InstrumentChoice {
             InstrumentChoice::Mallet(k) => k.description(),
             InstrumentChoice::Pluck(k) => k.description(),
             InstrumentChoice::Choir => "Voices singing \"aah\" and \"ooh\"",
+            InstrumentChoice::TalkBox(p) => p.description(),
+            InstrumentChoice::Patch => "Modules wired together in the patch editor",
         }
     }
 
@@ -1147,6 +1982,23 @@ impl InstrumentChoice {
             InstrumentChoice::Mallet(k) => Instrument::Mallets(k.params()),
             InstrumentChoice::Pluck(k) => Instrument::Pluck(k.params()),
             InstrumentChoice::Choir => Instrument::Choir(ChoirParams::default()),
+            InstrumentChoice::TalkBox(p) => Instrument::TalkBox(p.params()),
+            InstrumentChoice::Patch => Instrument::Patch(Box::default()),
+        }
+    }
+
+    /// Arpeggiator settings a new track with this instrument starts with.
+    pub fn default_arp(self) -> crate::project::ArpParams {
+        use crate::project::{ArpParams, ArpPattern};
+        match self {
+            InstrumentChoice::Synth(SynthPreset::DarkArp) => ArpParams {
+                on: true,
+                rate: 0.25,
+                pattern: ArpPattern::Up,
+                octaves: 2,
+                gate: 0.5,
+            },
+            _ => ArpParams::default(),
         }
     }
 
@@ -1186,12 +2038,19 @@ impl InstrumentChoice {
                     n(1.0, 0.6, r + 12),
                 ]
             }
-            Category::Pads => vec![
-                n(0.0, 1.6, 60),
-                n(0.0, 1.6, 64),
-                n(0.0, 1.6, 67),
-                n(0.4, 1.2, 72),
-            ],
+            Category::Pads | Category::Voices
+                if !matches!(
+                    self,
+                    InstrumentChoice::TalkBox(TalkBoxPreset::TalkBox | TalkBoxPreset::RobotVoice)
+                ) =>
+            {
+                vec![
+                    n(0.0, 1.6, 60),
+                    n(0.0, 1.6, 64),
+                    n(0.0, 1.6, 67),
+                    n(0.4, 1.2, 72),
+                ]
+            }
             _ => {
                 let r = match self {
                     InstrumentChoice::Mallet(MalletKind::Glockenspiel) => 84,
@@ -1206,7 +2065,7 @@ impl InstrumentChoice {
                     n(0.54, 0.3, r + 12),
                 ];
                 // Chords for keys and plucked instruments, a held note for leads.
-                if self.category() == Category::Leads {
+                if matches!(self.category(), Category::Leads | Category::Voices) {
                     v.push(n(0.9, 0.7, r + 7));
                 } else {
                     v.extend([n(0.9, 0.9, r), n(0.9, 0.9, r + 4), n(0.9, 0.9, r + 7)]);
@@ -1234,7 +2093,10 @@ mod tests {
     fn choices_roundtrip_and_are_grouped() {
         let all = InstrumentChoice::all();
         // Drums, piano + e-piano, organs, plucked, mallets, synths, choir.
-        assert_eq!(all.len(), 1 + 2 + 3 + 4 + 4 + 14 + 1);
+        assert_eq!(
+            all.len(),
+            1 + 2 + 3 + 4 + 4 + SynthPreset::ALL.len() + 1 + 3
+        );
         for c in &all {
             assert_eq!(c.instrument().choice(), *c, "{c:?}");
             assert!(!c.preview_notes().is_empty());

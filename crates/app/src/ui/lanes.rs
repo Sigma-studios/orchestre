@@ -378,6 +378,35 @@ pub fn add_instrument_menu(app: &mut OrchestreApp, ui: &mut Ui) {
                 .size(11.5)
                 .color(theme::TEXT_DIM),
         );
+        if !app.my_sounds.is_empty() {
+            ui.menu_button("★ My sounds", |ui| {
+                ui.set_min_width(220.0);
+                for (i, s) in app.my_sounds.clone().into_iter().enumerate() {
+                    let resp = ui.horizontal(|ui| {
+                        let resp = ui.button(&s.name);
+                        ui.label(
+                            RichText::new(s.instrument.label())
+                                .size(11.5)
+                                .color(theme::TEXT_DIM),
+                        );
+                        resp
+                    });
+                    let button = resp.inner;
+                    crate::ui::preview::hover_mine(app, &button.union(resp.response), i);
+                    if button.clicked() {
+                        let id = app.project.add_track(s.instrument.choice());
+                        if let Some(t) = app.project.track_mut(id) {
+                            t.instrument = s.instrument.clone();
+                            t.arp = s.arp;
+                            t.name = s.name.clone();
+                        }
+                        app.select_track(Some(id));
+                        app.touch();
+                        ui.close();
+                    }
+                }
+            });
+        }
         for cat in Category::ALL {
             let choices: Vec<InstrumentChoice> = InstrumentChoice::all()
                 .into_iter()

@@ -2,9 +2,10 @@
 
 use egui::{Color32, RichText, Slider, Ui};
 use orchestre_core::{
-    Category, ChoirParams, DrumKit, DrumParams, DrumPiece, EPianoParams, FxParams, Grid,
-    Instrument, InstrumentChoice, MalletParams, OrganParams, PPQ, PianoParams, PluckParams,
-    SynthParams, Track, Wave,
+    ARP_RATES, ArpParams, ArpPattern, Category, ChoirParams, DrumKit, DrumParams, DrumPiece,
+    EPianoParams, FilterType, FxParams, Grid, Instrument, InstrumentChoice, LFO_BEATS, LfoWave,
+    MalletParams, ModSource, ModTarget, OrganParams, PPQ, PianoParams, PluckParams, SynthParams,
+    TalkBoxParams, Track, Vowel, Wave,
 };
 
 use crate::app::OrchestreApp;
@@ -43,8 +44,17 @@ pub fn show(app: &mut OrchestreApp, ui: &mut Ui) {
             note_tools(app, ui, &mut t);
             ui.separator();
 
+            let mut open_patch = false;
             match &mut t.instrument {
-                Instrument::Synth(p) => synth_ui(ui, p),
+                Instrument::Synth(p) => {
+                    if synth_ui(ui, p) {
+                        t.instrument = Instrument::Patch(Box::new(
+                            orchestre_core::patch::Patch::from_synth(p),
+                        ));
+                        open_patch = true;
+                    }
+                }
+                Instrument::Patch(p) => open_patch = patch_ui(ui, p),
                 Instrument::Drums(p) => drums_ui(ui, p),
                 Instrument::Piano(p) => piano_ui(ui, p),
                 Instrument::EPiano(p) => epiano_ui(ui, p),
@@ -52,6 +62,13 @@ pub fn show(app: &mut OrchestreApp, ui: &mut Ui) {
                 Instrument::Mallets(p) => mallets_ui(ui, p),
                 Instrument::Pluck(p) => pluck_ui(ui, p),
                 Instrument::Choir(p) => choir_ui(ui, p),
+                Instrument::TalkBox(p) => talkbox_ui(ui, p),
+            }
+            if open_patch {
+                crate::ui::patch::open(app, t.id);
+            }
+            if !t.instrument.is_drums() {
+                arp_ui(ui, &mut t.arp);
             }
             ui.separator();
             mix_ui(ui, &mut t);
@@ -99,11 +116,38 @@ fn instrument_picker(app: &mut OrchestreApp, ui: &mut Ui, t: &mut Track) {
             inst => {
                 // Any melodic instrument can replace another: the notes still fit.
                 let current = inst.choice();
+                let mine = app.my_sounds.clone();
+                let mut picked = None;
+                let mut delete = None;
                 egui::ComboBox::from_id_salt("preset")
                     .width(140.0)
                     .height(420.0)
                     .selected_text(current.label())
                     .show_ui(ui, |ui| {
+                        if !mine.is_empty() {
+                            ui.label(RichText::new("My sounds").size(11.0).color(theme::TEXT_DIM));
+                            for (i, s) in mine.iter().enumerate() {
+                                let resp = ui
+                                    .selectable_label(
+                                        *inst == s.instrument,
+                                        format!("★ {}", s.name),
+                                    )
+                                    .on_hover_text(format!(
+                                        "Based on {} · right-click to delete",
+                                        s.instrument.label()
+                                    ));
+                                crate::ui::preview::hover_mine(app, &resp, i);
+                                if resp.clicked() {
+                                    picked = Some((s.instrument.clone(), Some(s.arp)));
+                                }
+                                resp.context_menu(|ui| {
+                                    if ui.button("Delete from My sounds").clicked() {
+                                        delete = Some(i);
+                                        ui.close();
+                                    }
+                                });
+                            }
+                        }
                         for cat in Category::ALL.into_iter().filter(|&c| c != Category::Drums) {
                             ui.label(RichText::new(cat.label()).size(11.0).color(theme::TEXT_DIM));
                             for choice in InstrumentChoice::all()
@@ -115,16 +159,76 @@ fn instrument_picker(app: &mut OrchestreApp, ui: &mut Ui, t: &mut Track) {
                                     .on_hover_text(choice.description());
                                 crate::ui::preview::hover(app, &resp, choice);
                                 if resp.clicked() && choice != current {
-                                    *inst = choice.instrument();
+                                    let arp = choice.default_arp();
+                                    picked = Some((choice.instrument(), arp.on.then_some(arp)));
                                 }
                             }
                         }
                     })
                     .response
                     .on_hover_text("Choosing a sound resets its settings. Rest on one to hear it.");
+                if let Some((instrument, arp)) = picked {
+                    *inst = instrument;
+                    if let Some(arp) = arp {
+                        t.arp = arp;
+                    }
+                }
+                if let Some(i) = delete {
+                    let name = app.my_sounds.remove(i).name;
+                    app.notify(format!("Deleted \"{name}\" from My sounds"));
+                }
+                if ui
+                    .button("★")
+                    .on_hover_text("Save this sound to My sounds, to use it again in any song")
+                    .clicked()
+                {
+                    app.naming_sound = Some(t.name.clone());
+                }
             }
         }
     });
+    save_sound_row(app, ui, t);
+}
+
+/// The name field shown after clicking ★.
+fn save_sound_row(app: &mut OrchestreApp, ui: &mut Ui, t: &Track) {
+    let Some(mut name) = app.naming_sound.take() else {
+        return;
+    };
+    let mut keep = true;
+    // Read the keys before the text field takes them.
+    let (enter, escape) = ui.input(|i| {
+        (
+            i.key_pressed(egui::Key::Enter),
+            i.key_pressed(egui::Key::Escape),
+        )
+    });
+    ui.horizontal(|ui| {
+        let edit = ui.add(
+            egui::TextEdit::singleline(&mut name)
+                .desired_width(110.0)
+                .hint_text("Name"),
+        );
+        if !edit.has_focus() && !edit.lost_focus() {
+            edit.request_focus();
+        }
+        if (ui.button("Save").clicked() || enter) && !name.trim().is_empty() {
+            let sound = crate::my_sounds::MySound {
+                name: name.trim().to_string(),
+                instrument: t.instrument.clone(),
+                arp: t.arp,
+            };
+            app.notify(format!("Saved \"{}\" to My sounds", sound.name));
+            crate::my_sounds::add(&mut app.my_sounds, sound);
+            keep = false;
+        }
+        if ui.button("×").on_hover_text("Cancel").clicked() || escape {
+            keep = false;
+        }
+    });
+    if keep {
+        app.naming_sound = Some(name);
+    }
 }
 
 fn key_lock_picker(app: &mut OrchestreApp, ui: &mut Ui, track: &Track) {
@@ -220,16 +324,18 @@ fn section(ui: &mut Ui, title: &str, open: bool, body: impl FnOnce(&mut Ui)) {
         .show(ui, body);
 }
 
-fn seconds(ui: &mut Ui, v: &mut f32, max: f32, label: &str) {
+fn seconds(ui: &mut Ui, v: &mut f32, max: f32, label: &str) -> egui::Response {
     ui.add(
         Slider::new(v, 0.001..=max)
             .logarithmic(true)
             .suffix(" s")
             .text(label),
-    );
+    )
 }
 
-fn synth_ui(ui: &mut Ui, p: &mut SynthParams) {
+/// Returns true when asked to rebuild the sound as a patch.
+fn synth_ui(ui: &mut Ui, p: &mut SynthParams) -> bool {
+    let mut to_patch = false;
     section(ui, "Sound", true, |ui| {
         ui.add(
             Slider::new(&mut p.cutoff, 60.0..=16000.0)
@@ -346,14 +452,208 @@ fn synth_ui(ui: &mut Ui, p: &mut SynthParams) {
         seconds(ui, &mut p.amp.decay, 4.0, "Decay");
         ui.add(Slider::new(&mut p.amp.sustain, 0.0..=1.0).text("Sustain"));
         seconds(ui, &mut p.amp.release, 5.0, "Release");
-        ui.label(RichText::new("Wobble / vibrato").color(theme::TEXT_DIM));
+        ui.label(RichText::new("Wobble / vibrato (LFO)").color(theme::TEXT_DIM));
+        ui.horizontal(|ui| {
+            egui::ComboBox::from_id_salt("lfo_wave")
+                .width(90.0)
+                .selected_text(p.lfo_wave.label())
+                .show_ui(ui, |ui| {
+                    for w in LfoWave::ALL {
+                        ui.selectable_value(&mut p.lfo_wave, w, w.label());
+                    }
+                });
+            ui.label("Shape");
+        });
+        ui.horizontal(|ui| {
+            let current = LFO_BEATS
+                .iter()
+                .find(|b| (b.0 - p.lfo_beats).abs() < 1e-4)
+                .map_or("Custom", |b| b.1);
+            egui::ComboBox::from_id_salt("lfo_sync")
+                .width(90.0)
+                .selected_text(current)
+                .show_ui(ui, |ui| {
+                    for (beats, label) in LFO_BEATS {
+                        ui.selectable_value(&mut p.lfo_beats, beats, label);
+                    }
+                })
+                .response
+                .on_hover_text("Lock the wobble to the song tempo");
+            ui.label("Sync");
+        });
+        if p.lfo_beats <= 0.0 {
+            ui.add(
+                Slider::new(&mut p.lfo_rate, 0.05..=20.0)
+                    .logarithmic(true)
+                    .suffix(" Hz")
+                    .text("Speed"),
+            );
+        }
         ui.add(
-            Slider::new(&mut p.lfo_rate, 0.05..=20.0)
-                .logarithmic(true)
-                .suffix(" Hz")
-                .text("Speed"),
-        );
+            Slider::new(&mut p.lfo_amp, 0.0..=1.0)
+                .show_value(false)
+                .text("Tremolo"),
+        )
+        .on_hover_text("The LFO pulses the volume");
+        ui.add(
+            Slider::new(&mut p.pwm, 0.0..=1.0)
+                .show_value(false)
+                .text("PWM"),
+        )
+        .on_hover_text("The LFO sweeps square and pulse waves: the shimmer of Juno pads");
     });
+    section(ui, "Classic synth", false, |ui| {
+        ui.horizontal(|ui| {
+            egui::ComboBox::from_id_salt("filter_type")
+                .width(130.0)
+                .selected_text(p.filter_type.label())
+                .show_ui(ui, |ui| {
+                    for f in FilterType::ALL {
+                        ui.selectable_value(&mut p.filter_type, f, f.label());
+                    }
+                });
+            ui.label("Filter");
+        });
+        ui.add(
+            Slider::new(&mut p.drive, 0.0..=1.0)
+                .show_value(false)
+                .text("Fuzz"),
+        )
+        .on_hover_text("Distortion pedal after the filter");
+        ui.add(
+            Slider::new(&mut p.accent, 0.0..=1.0)
+                .show_value(false)
+                .text("Accent"),
+        )
+        .on_hover_text("Loud notes open the filter and hit harder (acid basslines)");
+        if p.mono {
+            ui.checkbox(&mut p.slide_only, "Slide only overlapping notes")
+                .on_hover_text("Acid-style: notes glide only when they overlap the previous one");
+        }
+        ui.checkbox(&mut p.sync, "Sync wave 2 to wave 1")
+            .on_hover_text("Hard sync: raise wave 2's pitch for a tearing, vocal lead");
+        ui.add(
+            Slider::new(&mut p.env_pitch2, -24.0..=48.0)
+                .suffix(" st")
+                .text("Sweep"),
+        )
+        .on_hover_text("The filter envelope sweeps wave 2's pitch, in semitones (with sync: the classic sync sweep)");
+        ui.add(
+            Slider::new(&mut p.ring, 0.0..=1.0)
+                .show_value(false)
+                .text("Ring mod"),
+        )
+        .on_hover_text("Wave 1 × wave 2: metallic, bell-like tones");
+        ui.label(RichText::new("Wave 3").color(theme::TEXT_DIM));
+        wave_combo(ui, "osc3", &mut p.osc3, "Shape");
+        ui.add(
+            Slider::new(&mut p.osc3_level, 0.0..=1.0)
+                .show_value(false)
+                .text("Level"),
+        );
+        let mut semis = p.osc3_semitones as i32;
+        if ui
+            .add(Slider::new(&mut semis, -24..=24).text("Pitch"))
+            .changed()
+        {
+            p.osc3_semitones = semis as i8;
+        }
+        ui.add(
+            Slider::new(&mut p.osc3_detune, -50.0..=50.0)
+                .suffix(" ct")
+                .text("Detune"),
+        );
+        ui.label(RichText::new("Modulation").color(theme::TEXT_DIM));
+        for (i, slot) in p.mods.iter_mut().enumerate() {
+            ui.horizontal(|ui| {
+                egui::ComboBox::from_id_salt(("mod_src", i))
+                    .width(80.0)
+                    .selected_text(slot.source.label())
+                    .show_ui(ui, |ui| {
+                        for m in ModSource::ALL {
+                            ui.selectable_value(&mut slot.source, m, m.label());
+                        }
+                    });
+                ui.label("to");
+                egui::ComboBox::from_id_salt(("mod_dst", i))
+                    .width(90.0)
+                    .selected_text(slot.target.label())
+                    .show_ui(ui, |ui| {
+                        for m in ModTarget::ALL {
+                            ui.selectable_value(&mut slot.target, m, m.label());
+                        }
+                    });
+            });
+            if slot.source != ModSource::None && slot.target != ModTarget::None {
+                ui.add(
+                    Slider::new(&mut slot.amount, -1.0..=1.0)
+                        .show_value(false)
+                        .text("Amount"),
+                );
+            }
+        }
+        ui.add_space(6.0);
+        to_patch = ui
+            .button("🔧 Open as a patch (expert)…")
+            .on_hover_text(
+                "Rebuild this sound from modules and cables, to wire it any way you like. \
+                 Unison, sync and a few extras are left out. Undo brings the synth back.",
+            )
+            .clicked();
+    });
+    to_patch
+}
+
+/// Returns true when the patch editor should open.
+fn patch_ui(ui: &mut Ui, p: &mut orchestre_core::patch::Patch) -> bool {
+    let mut open = false;
+    section(ui, "Sound", true, |ui| {
+        let macros = p.macros.clone();
+        let mut remove = None;
+        for (i, m) in macros.iter().enumerate() {
+            let Some(mut v) = p.macro_value(m) else {
+                continue;
+            };
+            let resp = ui.add(
+                Slider::new(&mut v, 0.0..=1.0)
+                    .show_value(false)
+                    .text(&m.name),
+            );
+            if resp.changed() {
+                p.set_macro(m, v);
+            }
+            resp.context_menu(|ui| {
+                if ui.button("Remove this knob").clicked() {
+                    remove = Some(i);
+                    ui.close();
+                }
+            });
+        }
+        if let Some(i) = remove {
+            p.macros.remove(i);
+        }
+        if p.macros.is_empty() {
+            ui.label(
+                RichText::new("Right-click a setting in the patch editor to show it here.")
+                    .size(11.5)
+                    .color(theme::TEXT_DIM),
+            );
+        }
+        knob(ui, &mut p.chorus, 0.0..=1.0, "Chorus");
+        knob(ui, &mut p.gain, 0.0..=1.2, "Level");
+        ui.horizontal(|ui| {
+            ui.checkbox(&mut p.mono, "One note at a time");
+            if p.mono {
+                knob(ui, &mut p.glide, 0.0..=0.5, "Glide");
+            }
+        });
+        ui.add_space(4.0);
+        open = ui
+            .button("🔧 Open patch editor")
+            .on_hover_text("Modules and cables: build the sound any way you like")
+            .clicked();
+    });
+    open
 }
 
 fn wave_combo(ui: &mut Ui, id: &str, w: &mut Wave, label: &str) {
@@ -470,6 +770,80 @@ fn mix_ui(ui: &mut Ui, t: &mut Track) {
             Slider::new(&mut fx.drive, 0.0..=1.0)
                 .show_value(false)
                 .text("Grit (drive)"),
+        );
+        ui.add(
+            Slider::new(&mut fx.filter, -1.0..=1.0)
+                .show_value(false)
+                .text("Filter sweep"),
+        )
+        .on_hover_text(
+            "DJ filter: left muffles the highs, right thins out the lows. Middle is off. \
+             Draw it over time with Automation under the notes.",
+        );
+        ui.add(
+            Slider::new(&mut fx.phaser, 0.0..=1.0)
+                .show_value(false)
+                .text("Phaser"),
+        )
+        .on_hover_text("A slow, swooshing sweep (disco and French house)");
+        ui.add(
+            Slider::new(&mut fx.pump, 0.0..=1.0)
+                .show_value(false)
+                .text("Pump"),
+        )
+        .on_hover_text("Ducks on every beat, like the kick is pushing the sound away (sidechain)");
+    });
+}
+
+fn arp_ui(ui: &mut Ui, a: &mut ArpParams) {
+    let title = if a.on {
+        "Arpeggiator (on)"
+    } else {
+        "Arpeggiator"
+    };
+    section(ui, title, a.on, |ui| {
+        ui.checkbox(&mut a.on, "Play chords as arpeggios")
+            .on_hover_text("Hold or write a chord: its notes play one after another, in time");
+        if !a.on {
+            return;
+        }
+        ui.horizontal(|ui| {
+            let current = ARP_RATES
+                .iter()
+                .find(|r| (r.0 - a.rate).abs() < 1e-4)
+                .map_or("Custom", |r| r.1);
+            egui::ComboBox::from_id_salt("arp_rate")
+                .width(90.0)
+                .selected_text(current)
+                .show_ui(ui, |ui| {
+                    for (rate, label) in ARP_RATES {
+                        ui.selectable_value(&mut a.rate, rate, label);
+                    }
+                });
+            ui.label("Speed");
+        });
+        ui.horizontal(|ui| {
+            egui::ComboBox::from_id_salt("arp_pattern")
+                .width(90.0)
+                .selected_text(a.pattern.label())
+                .show_ui(ui, |ui| {
+                    for pat in ArpPattern::ALL {
+                        ui.selectable_value(&mut a.pattern, pat, pat.label());
+                    }
+                });
+            ui.label("Pattern");
+        });
+        let mut oct = a.octaves as i32;
+        if ui
+            .add(Slider::new(&mut oct, 1..=4).text("Octaves"))
+            .changed()
+        {
+            a.octaves = oct as u8;
+        }
+        ui.add(
+            Slider::new(&mut a.gate, 0.05..=1.0)
+                .show_value(false)
+                .text("Note length"),
         );
     });
 }
@@ -618,5 +992,78 @@ fn choir_ui(ui: &mut Ui, p: &mut ChoirParams) {
         seconds(ui, &mut p.attack, 3.0, "Fade in");
         seconds(ui, &mut p.release, 4.0, "Fade out");
         knob(ui, &mut p.gain, 0.0..=1.2, "Level");
+    });
+}
+
+fn talkbox_ui(ui: &mut Ui, p: &mut TalkBoxParams) {
+    section(ui, "Sound", true, |ui| {
+        ui.label(
+            RichText::new("Each new note sings the next vowel:")
+                .size(11.5)
+                .color(theme::TEXT_DIM),
+        );
+        let steps = (p.steps as usize).clamp(1, p.vowels.len());
+        ui.horizontal_wrapped(|ui| {
+            ui.spacing_mut().item_spacing.x = 3.0;
+            for v in p.vowels.iter_mut().take(steps) {
+                // Clicks cycle through the vowels.
+                let resp = ui
+                    .button(RichText::new(v.label()).monospace())
+                    .on_hover_text("Click: next vowel · right-click: previous");
+                let len = Vowel::ALL.len();
+                if resp.clicked() {
+                    *v = Vowel::ALL[(*v as usize + 1) % len];
+                } else if resp.secondary_clicked() {
+                    *v = Vowel::ALL[(*v as usize + len - 1) % len];
+                }
+            }
+        });
+        let mut n = steps as i32;
+        if ui
+            .add(Slider::new(&mut n, 1..=p.vowels.len() as i32).text("Vowels"))
+            .changed()
+        {
+            p.steps = n as u8;
+        }
+        knob(ui, &mut p.mouth, 0.0..=1.0, "Wah")
+            .on_hover_text("How much the mouth closes between notes");
+        seconds(ui, &mut p.mouth_time, 0.5, "Open")
+            .on_hover_text("Seconds for the mouth to open on each note");
+        ui.add(
+            Slider::new(&mut p.shift, -12.0..=12.0)
+                .show_value(false)
+                .text("Mouth size"),
+        )
+        .on_hover_text("Bigger, deeper mouth ← → smaller, cartoon mouth");
+        ui.checkbox(&mut p.vocoder, "Vocoder (robot)")
+            .on_hover_text("Grainy robot bands instead of the smooth talk-box mouth");
+        knob(ui, &mut p.noise, 0.0..=1.0, "Breath");
+        knob(ui, &mut p.vibrato, 0.0..=1.0, "Vibrato");
+        knob(ui, &mut p.chorus, 0.0..=1.0, "Chorus");
+        ui.horizontal(|ui| {
+            ui.checkbox(&mut p.mono, "One note at a time");
+            if p.mono {
+                ui.add(
+                    Slider::new(&mut p.glide, 0.0..=0.5)
+                        .show_value(false)
+                        .text("Glide"),
+                );
+            }
+        });
+        knob(ui, &mut p.gain, 0.0..=1.2, "Level");
+    });
+    section(ui, "Advanced", false, |ui| {
+        wave_combo(ui, "tb_wave", &mut p.wave, "Wave");
+        let mut oct = p.octave as i32;
+        if ui
+            .add(Slider::new(&mut oct, -3..=3).text("Octave"))
+            .changed()
+        {
+            p.octave = oct as i8;
+        }
+        seconds(ui, &mut p.amp.attack, 3.0, "Attack");
+        seconds(ui, &mut p.amp.decay, 4.0, "Decay");
+        ui.add(Slider::new(&mut p.amp.sustain, 0.0..=1.0).text("Sustain"));
+        seconds(ui, &mut p.amp.release, 5.0, "Release");
     });
 }

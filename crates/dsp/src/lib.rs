@@ -1,6 +1,7 @@
 //! Realtime synthesis engine for Orchestre. Runs natively on the audio
 //! thread and in the browser inside an AudioWorklet.
 
+pub mod arp;
 pub mod choir;
 pub mod click;
 pub mod drums;
@@ -13,12 +14,14 @@ pub mod glottis;
 pub mod mallets;
 pub mod organ;
 pub mod osc;
+pub mod patch;
 pub mod piano;
 pub mod pluck;
 pub mod render;
 pub mod sfx;
 pub mod song;
 pub mod synth;
+pub mod talkbox;
 pub mod util;
 
 pub use engine::Engine;

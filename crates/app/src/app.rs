@@ -135,6 +135,11 @@ pub struct OrchestreApp {
     pub preview: crate::ui::preview::PreviewState,
     pub mode: crate::sfx::Mode,
     pub sfx: crate::sfx::SfxEditor,
+    pub automation: crate::ui::automation::AutoView,
+    pub my_sounds: Vec<crate::my_sounds::MySound>,
+    /// Name being typed for "save to My sounds".
+    pub naming_sound: Option<String>,
+    pub patch_view: crate::ui::patch::PatchView,
 }
 
 impl OrchestreApp {
@@ -154,6 +159,7 @@ impl OrchestreApp {
         let mut app = Self::build(project, Audio::new());
         app.selected = selected;
         app.settings = crate::settings::Settings::load(cc.storage);
+        app.my_sounds = crate::my_sounds::load(cc.storage);
         if let Some(storage) = cc.storage {
             restore_sounds(&mut app, storage);
         }
@@ -216,6 +222,10 @@ impl OrchestreApp {
                 orchestre_core::sfx::presets::find("Explosion")
                     .map_or_else(Default::default, |p| p.sound()),
             ),
+            automation: Default::default(),
+            my_sounds: Vec::new(),
+            naming_sound: None,
+            patch_view: Default::default(),
         }
     }
 
@@ -405,7 +415,7 @@ impl OrchestreApp {
                         .iter()
                         .zip(&song.tracks)
                         .filter(|(a, b)| a.params != b.params)
-                        .map(|(_, b)| b.params)
+                        .map(|(_, b)| b.params.clone())
                         .collect();
                     for p in changed {
                         self.audio.send(Cmd::SetTrack(p));
@@ -589,6 +599,9 @@ impl eframe::App for OrchestreApp {
             crate::sfx::Mode::Sounds => crate::ui::sfx::show(self, ui),
         }
         crate::ui::dialogs::show(self, &ctx);
+        if self.mode == crate::sfx::Mode::Music {
+            crate::ui::patch::window(self, &ctx);
+        }
         crate::settings::window(self, &ctx);
         crate::ui::preview::end_frame(self);
 
@@ -601,6 +614,7 @@ impl eframe::App for OrchestreApp {
             storage.set_string(STORAGE_KEY, json);
         }
         self.settings.save(storage);
+        crate::my_sounds::save(&self.my_sounds, storage);
         use orchestre_core::sfx::file::sound_to_json;
         if let (Ok(sound), Ok(saved)) = (
             sound_to_json(&self.sfx.sound),

@@ -2,17 +2,20 @@
 
 A beginner-friendly music maker. Every sound is synthesized from scratch; no samples. Runs natively and in the browser from one Rust codebase.
 
-**Instruments** (29, grouped in the *Add instrument* menu; rest the pointer on one to hear it):
+**Instruments** (48, grouped in the *Add instrument* menu; rest the pointer on one to hear it):
 
 | Group | Sounds |
 |---|---|
 | Drums & percussion | Kick, snare, clap, rim, hi-hats, toms, crash, cowbell, tambourine, shaker, claves, congas, bongo (3 kit styles) |
-| Keys | Piano, electric piano, jazz / rock / church organ, bell keys |
-| Plucked | Guitar, harp, koto, synth pluck, arp pluck |
+| Keys | Piano, electric piano, jazz / rock / church organ, bell keys, poly brass, house organ, house stab |
+| Plucked | Guitar, harp, koto, synth pluck, arp pluck, dark arp |
 | Mallets | Marimba, vibraphone, xylophone, glockenspiel |
-| Bass | Bass, sub bass, 808 bass, wobble bass, bass guitar |
-| Leads | Lead, chiptune, brass, flute |
-| Pads & choir | Pad, supersaw, strings, choir |
+| Bass | Bass, sub bass, 808 bass, wobble bass, bass guitar, acid bass, fat (Moog-style) bass, Reese bass, FM bass, disco bass |
+| Leads | Lead, chiptune, brass, flute, squelch lead (Da Funk style), fat lead, sync lead, rave hoover |
+| Pads | Pad, supersaw, strings, PWM pad, string machine, film brass |
+| Voices & robots | Choir, talk box, robot voice (vocoder), vocoder choir |
+
+The classic synth behind most of these has 12, 24 (ladder) and 18 dB (acid) low-pass, high-pass and band-pass filters, a fuzz stage, hard sync, pulse-width modulation, ring modulation, a third oscillator, LFO shapes with tempo sync, three modulation slots, and acid-style accent and slides (loud notes are accented; overlapping notes slide).
 
 ## Run
 
@@ -53,6 +56,11 @@ On the web the engine runs in an AudioWorklet (built by a Trunk pre-build hook i
 - Space: play/stop. Ctrl/Cmd+Z: undo; Ctrl/Cmd+Shift+Z: redo.
 - Your computer keyboard plays the selected track. On melodic tracks the home row (A S D F… on QWERTY, Q S D F… on AZERTY) plays white keys and the row above plays black keys; `-` / `=` change the octave. On drum tracks each home-row key plays one drum (kick, snare, clap, rim, hi-hat, open hat, toms, crash) and the row above plays the percussion (cowbell, tambourine, shaker, claves, congas, bongo); the drum grid shows each row's key. MIDI keyboards work natively.
 - **Recording:** select a track and press ⏺ Rec to record what you play on the keyboard or a MIDI keyboard. By default there's a one-bar count-in, a metronome, and notes snap to the grid; the ⏷ menu next to Rec turns each off. With Loop on, each pass adds notes on top. A whole take is one undo step.
+- **Sounds and effects** (sidebar): every instrument has a few simple knobs; synths also have *Advanced* and *Classic synth* sections. *Mix & effects* adds a DJ-style filter sweep, phaser and pump (ducks on every beat, like sidechain compression).
+- **Arpeggiator** (sidebar, melodic tracks): held or written chords play as a pattern of single notes, in time with the song.
+- **Automation** (bar under the note editor): open it, pick a setting (filter sweep, synth brightness, volume, echo…) and click to draw how it changes over the song; drag points to move them, right-click to delete.
+- **My sounds**: ★ next to *Sound* saves the track's sound (settings and arpeggiator) under a name; it then appears at the top of the sound menu and in *Add instrument*, in every song.
+- **Patch editor** (experts): *Classic synth → Open as a patch* rebuilds a synth from modules (oscillators, filters, envelopes, LFOs, mixers…) wired with cables. Drag from an output to an input to connect; right-click a setting to show it as a knob in the sidebar.
 - File menu: save/open `.orch` songs and export WAV. The song also autosaves.
 
 ## Using songs in a Bevy game
