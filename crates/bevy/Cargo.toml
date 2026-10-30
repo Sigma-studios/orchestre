@@ -10,5 +10,5 @@ description = "Play Orchestre (.orch) songs in Bevy, synthesized live"
 [dependencies]
 orchestre-core.workspace = true
 orchestre-dsp.workspace = true
-bevy = { version = "0.19", default-features = false, features = ["bevy_asset", "bevy_audio"] }
+bevy = { version = "0.20", default-features = false, features = ["bevy_asset", "bevy_audio"] }
 serde.workspace = true
