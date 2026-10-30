@@ -31,7 +31,7 @@
 //! # use orchestre_bevy::{OrchestreSettings, OrchestreSong};
 //! # fn system(assets: Res<AssetServer>) {
 //! let jingle: Handle<OrchestreSong> =
-//!     assets.load_with_settings("music/win.orch", |s: &mut OrchestreSettings| s.looping = false);
+//!     assets.load_builder().with_settings(|s: &mut OrchestreSettings| s.looping = false).load("music/win.orch");
 //! # }
 //! ```
 
