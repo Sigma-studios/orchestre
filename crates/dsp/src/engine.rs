@@ -8,6 +8,7 @@ use crate::epiano::EPianoEngine;
 use crate::filter::Svf;
 use crate::fx::{Delay, Phaser, Reverb};
 use crate::mallets::MalletEngine;
+use crate::meow::MeowEngine;
 use crate::organ::OrganEngine;
 use crate::patch::PatchEngine;
 use crate::piano::PianoEngine;
@@ -32,6 +33,7 @@ enum Inst {
     Pluck(Box<PluckEngine>),
     Choir(Box<ChoirEngine>),
     TalkBox(Box<TalkBoxEngine>),
+    Meow(Box<MeowEngine>),
     Patch(Box<PatchEngine>),
 }
 
@@ -47,6 +49,7 @@ macro_rules! each {
             Inst::Pluck($e) => $body,
             Inst::Choir($e) => $body,
             Inst::TalkBox($e) => $body,
+            Inst::Meow($e) => $body,
             Inst::Patch($e) => $body,
         }
     };
@@ -64,6 +67,7 @@ impl Inst {
             Instrument::Pluck(p) => Inst::Pluck(Box::new(PluckEngine::new(*p, sr))),
             Instrument::Choir(p) => Inst::Choir(Box::new(ChoirEngine::new(*p, sr))),
             Instrument::TalkBox(p) => Inst::TalkBox(Box::new(TalkBoxEngine::new(*p, sr))),
+            Instrument::Meow(p) => Inst::Meow(Box::new(MeowEngine::new(*p, sr))),
             Instrument::Patch(p) => Inst::Patch(Box::new(PatchEngine::new((**p).clone(), sr))),
         }
     }
@@ -80,6 +84,7 @@ impl Inst {
             (Inst::Pluck(e), Instrument::Pluck(p)) => e.set_params(*p),
             (Inst::Choir(e), Instrument::Choir(p)) => e.set_params(*p),
             (Inst::TalkBox(e), Instrument::TalkBox(p)) => e.set_params(*p),
+            (Inst::Meow(e), Instrument::Meow(p)) => e.set_params(*p),
             (Inst::Patch(e), Instrument::Patch(p)) => e.set_params(p),
             _ => return false,
         }
@@ -105,6 +110,7 @@ impl Inst {
         match self {
             Inst::Synth(e) => e.set_tempo(bpm),
             Inst::Patch(e) => e.set_tempo(bpm),
+            Inst::Meow(e) => e.set_tempo(bpm),
             _ => {}
         }
     }
@@ -519,6 +525,11 @@ impl Engine {
                     if let Inst::Synth(e) = &mut t.inst
                         && e.params.slide_only
                     {
+                        e.release_due(n.start as f64);
+                    }
+                    // Like a DAW sending note-offs before note-ons: the meow
+                    // synth slides only between notes that overlap.
+                    if let Inst::Meow(e) = &mut t.inst {
                         e.release_due(n.start as f64);
                     }
                     t.note_on(n.pitch, n.vel, n.end as f64);

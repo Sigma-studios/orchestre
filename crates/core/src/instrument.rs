@@ -1597,6 +1597,81 @@ impl Default for ChoirParams {
     }
 }
 
+/// The meow synth, after Knobster's MeowSynth (2009) as recreated by
+/// nyasynth: one saw wave through a resonant low-pass filter, and one
+/// "MEOW" envelope (attack, decay, sustain, release) that drives both the
+/// volume and the filter's sweep. How far the filter opens depends steeply on
+/// velocity: soft notes stay dark, loud notes meow wide open.
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+pub struct MeowParams {
+    /// Seconds.
+    pub attack: f32,
+    /// Seconds.
+    pub decay: f32,
+    /// Sustain in dB, -24..0. Like the original's knob, it maps to a level
+    /// on a skewed scale (-15 dB sits about two thirds of the way up).
+    pub sustain_db: f32,
+    /// Seconds.
+    pub release: f32,
+    /// Vibrato depth, 0..1 (1 = ±2 semitones).
+    pub vibrato: f32,
+    /// Seconds for the vibrato to fade in on each note.
+    pub vibrato_attack: f32,
+    /// Vibrato cycle length in beats (synced to the tempo).
+    pub vibrato_beats: f32,
+    /// Portamento time in seconds: a note played while another is held
+    /// slides from it, reaching its pitch in exactly this time.
+    pub glide: f32,
+    /// White noise mixed in before the filter, 0..1.
+    pub noise: f32,
+    /// Chorus mix, 0..1.
+    pub chorus: f32,
+    /// Play chords ("Polycat"); off = one note at a time ("Monocat").
+    pub polycat: bool,
+    /// Filter cutoff the meow starts and ends at, Hz.
+    pub cutoff: f32,
+    /// How far a full-velocity note opens the filter, Hz above `cutoff`.
+    pub sweep: f32,
+    /// Filter resonance (Q).
+    pub q: f32,
+    pub gain: f32,
+}
+
+impl Default for MeowParams {
+    fn default() -> Self {
+        // nyasynth's defaults.
+        MeowParams {
+            attack: 0.03,
+            decay: 1.25,
+            sustain_db: -15.0,
+            release: 0.49,
+            vibrato: 0.0,
+            vibrato_attack: 0.0,
+            vibrato_beats: 0.5,
+            glide: 0.12,
+            noise: 0.0,
+            chorus: 0.0,
+            polycat: false,
+            cutoff: 350.0,
+            sweep: 7000.0,
+            q: 2.5,
+            gain: 0.8,
+        }
+    }
+}
+
+/// Vibrato speeds of the meow synth: (cycle length in beats, label).
+pub const MEOW_VIBRATO_RATES: [(f32, &str); 8] = [
+    (16.0, "4 bars"),
+    (8.0, "2 bars"),
+    (4.0, "1 bar"),
+    (2.0, "1/2"),
+    (1.0, "1/4"),
+    (0.5, "1/8"),
+    (1.0 / 3.0, "1/12"),
+    (0.25, "1/16"),
+];
+
 /// Vowels a talk box or vocoder can "sing".
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default, Serialize, Deserialize)]
 pub enum Vowel {
@@ -1767,6 +1842,7 @@ pub enum Instrument {
     Pluck(PluckParams),
     Choir(ChoirParams),
     TalkBox(TalkBoxParams),
+    Meow(MeowParams),
     /// A modular patch (the expert patch editor).
     Patch(Box<crate::patch::Patch>),
 }
@@ -1788,6 +1864,7 @@ impl Instrument {
             Instrument::Pluck(p) => InstrumentChoice::Pluck(p.kind),
             Instrument::Choir(_) => InstrumentChoice::Choir,
             Instrument::TalkBox(p) => InstrumentChoice::TalkBox(p.preset),
+            Instrument::Meow(_) => InstrumentChoice::Meow,
             Instrument::Patch(_) => InstrumentChoice::Patch,
         }
     }
@@ -1826,6 +1903,7 @@ impl Instrument {
             }
             Instrument::Choir(p) => p.release,
             Instrument::TalkBox(p) => p.amp.release + p.mouth_time,
+            Instrument::Meow(p) => p.release,
             Instrument::Patch(p) => p.tail_seconds(),
         }
     }
@@ -1882,6 +1960,7 @@ pub enum InstrumentChoice {
     Pluck(PluckKind),
     Choir,
     TalkBox(TalkBoxPreset),
+    Meow,
     /// A modular patch. Not in the menus: made in the patch editor.
     Patch,
 }
@@ -1895,6 +1974,7 @@ impl InstrumentChoice {
         v.extend(PluckKind::ALL.map(C::Pluck));
         v.extend(MalletKind::ALL.map(C::Mallet));
         v.extend(SynthPreset::ALL.map(C::Synth));
+        v.push(C::Meow);
         v.push(C::Choir);
         v.extend(TalkBoxPreset::ALL.map(C::TalkBox));
         Category::ALL
@@ -1907,9 +1987,10 @@ impl InstrumentChoice {
         use SynthPreset as S;
         match self {
             InstrumentChoice::Drums => Category::Drums,
-            InstrumentChoice::Piano | InstrumentChoice::EPiano | InstrumentChoice::Organ(_) => {
-                Category::Keys
-            }
+            InstrumentChoice::Piano
+            | InstrumentChoice::EPiano
+            | InstrumentChoice::Organ(_)
+            | InstrumentChoice::Meow => Category::Keys,
             InstrumentChoice::Mallet(_) => Category::Mallets,
             InstrumentChoice::Pluck(PluckKind::BassGuitar) => Category::Bass,
             InstrumentChoice::Pluck(_) => Category::Plucked,
@@ -1953,6 +2034,7 @@ impl InstrumentChoice {
             InstrumentChoice::Pluck(k) => k.label(),
             InstrumentChoice::Choir => "Choir",
             InstrumentChoice::TalkBox(p) => p.label(),
+            InstrumentChoice::Meow => "Meow Synth",
             InstrumentChoice::Patch => "Custom Patch",
         }
     }
@@ -1968,6 +2050,7 @@ impl InstrumentChoice {
             InstrumentChoice::Pluck(k) => k.description(),
             InstrumentChoice::Choir => "Voices singing \"aah\" and \"ooh\"",
             InstrumentChoice::TalkBox(p) => p.description(),
+            InstrumentChoice::Meow => "A singing cat, after MeowSynth: play loud for a big meow",
             InstrumentChoice::Patch => "Modules wired together in the patch editor",
         }
     }
@@ -1983,6 +2066,7 @@ impl InstrumentChoice {
             InstrumentChoice::Pluck(k) => Instrument::Pluck(k.params()),
             InstrumentChoice::Choir => Instrument::Choir(ChoirParams::default()),
             InstrumentChoice::TalkBox(p) => Instrument::TalkBox(p.params()),
+            InstrumentChoice::Meow => Instrument::Meow(MeowParams::default()),
             InstrumentChoice::Patch => Instrument::Patch(Box::default()),
         }
     }
@@ -2064,8 +2148,11 @@ impl InstrumentChoice {
                     n(0.36, 0.2, r + 7),
                     n(0.54, 0.3, r + 12),
                 ];
-                // Chords for keys and plucked instruments, a held note for leads.
-                if matches!(self.category(), Category::Leads | Category::Voices) {
+                // Chords for keys and plucked instruments, a held note for leads
+                // (and the meow synth, which plays one note at a time).
+                if matches!(self.category(), Category::Leads | Category::Voices)
+                    || self == InstrumentChoice::Meow
+                {
                     v.push(n(0.9, 0.7, r + 7));
                 } else {
                     v.extend([n(0.9, 0.9, r), n(0.9, 0.9, r + 4), n(0.9, 0.9, r + 7)]);
@@ -2092,10 +2179,11 @@ mod tests {
     #[test]
     fn choices_roundtrip_and_are_grouped() {
         let all = InstrumentChoice::all();
-        // Drums, piano + e-piano, organs, plucked, mallets, synths, choir.
+        // Drums, piano + e-piano, organs, plucked, mallets, synths, meow,
+        // choir, talk boxes.
         assert_eq!(
             all.len(),
-            1 + 2 + 3 + 4 + 4 + SynthPreset::ALL.len() + 1 + 3
+            1 + 2 + 3 + 4 + 4 + SynthPreset::ALL.len() + 1 + 1 + 3
         );
         for c in &all {
             assert_eq!(c.instrument().choice(), *c, "{c:?}");

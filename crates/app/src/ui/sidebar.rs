@@ -4,8 +4,8 @@ use egui::{Color32, RichText, Slider, Ui};
 use orchestre_core::{
     ARP_RATES, ArpParams, ArpPattern, Category, ChoirParams, DrumKit, DrumParams, DrumPiece,
     EPianoParams, FilterType, FxParams, Grid, Instrument, InstrumentChoice, LFO_BEATS, LfoWave,
-    MalletParams, ModSource, ModTarget, OrganParams, PPQ, PianoParams, PluckParams, SynthParams,
-    TalkBoxParams, Track, Vowel, Wave,
+    MEOW_VIBRATO_RATES, MalletParams, MeowParams, ModSource, ModTarget, OrganParams, PPQ,
+    PianoParams, PluckParams, SynthParams, TalkBoxParams, Track, Vowel, Wave,
 };
 
 use crate::app::OrchestreApp;
@@ -63,6 +63,7 @@ pub fn show(app: &mut OrchestreApp, ui: &mut Ui) {
                 Instrument::Pluck(p) => pluck_ui(ui, p),
                 Instrument::Choir(p) => choir_ui(ui, p),
                 Instrument::TalkBox(p) => talkbox_ui(ui, p),
+                Instrument::Meow(p) => meow_ui(ui, p),
             }
             if open_patch {
                 crate::ui::patch::open(app, t.id);
@@ -992,6 +993,78 @@ fn choir_ui(ui: &mut Ui, p: &mut ChoirParams) {
         seconds(ui, &mut p.attack, 3.0, "Fade in");
         seconds(ui, &mut p.release, 4.0, "Fade out");
         knob(ui, &mut p.gain, 0.0..=1.2, "Level");
+    });
+}
+
+fn meow_ui(ui: &mut Ui, p: &mut MeowParams) {
+    section(ui, "Sound", true, |ui| {
+        ui.label(
+            RichText::new("Louder notes open the filter wider: a bigger meow.")
+                .size(11.5)
+                .color(theme::TEXT_DIM),
+        );
+        ui.label(RichText::new("Meow").color(theme::TEXT_DIM))
+            .on_hover_text("One envelope for both the volume and the filter's sweep");
+        seconds(ui, &mut p.attack, 10.0, "Attack");
+        seconds(ui, &mut p.decay, 5.0, "Decay");
+        ui.add(
+            Slider::new(&mut p.sustain_db, -24.0..=0.0)
+                .suffix(" dB")
+                .text("Sustain"),
+        );
+        seconds(ui, &mut p.release, 4.0, "Release");
+        ui.label(RichText::new("Vibrato").color(theme::TEXT_DIM));
+        knob(ui, &mut p.vibrato, 0.0..=1.0, "Amount").on_hover_text("Up to ±2 semitones");
+        ui.add(
+            Slider::new(&mut p.vibrato_attack, 0.0..=5.0)
+                .suffix(" s")
+                .text("Fade in"),
+        )
+        .on_hover_text("Each note starts steady and the vibrato grows in over this time");
+        ui.horizontal(|ui| {
+            let current = MEOW_VIBRATO_RATES
+                .iter()
+                .find(|b| (b.0 - p.vibrato_beats).abs() < 1e-4)
+                .map_or("Custom", |b| b.1);
+            egui::ComboBox::from_id_salt("meow_vibrato_rate")
+                .width(90.0)
+                .selected_text(current)
+                .show_ui(ui, |ui| {
+                    for (beats, label) in MEOW_VIBRATO_RATES {
+                        ui.selectable_value(&mut p.vibrato_beats, beats, label);
+                    }
+                });
+            ui.label("Speed");
+        });
+        ui.separator();
+        seconds(ui, &mut p.glide, 5.0, "Glide")
+            .on_hover_text("A note played while another is held slides from it in this time");
+        knob(ui, &mut p.noise, 0.0..=1.0, "Noise");
+        knob(ui, &mut p.chorus, 0.0..=1.0, "Chorus");
+        ui.checkbox(&mut p.polycat, "Polycat (chords)")
+            .on_hover_text("Off: one note at a time, every note meows. On: chords");
+        knob(ui, &mut p.gain, 0.0..=1.2, "Level");
+    });
+    section(ui, "Advanced", false, |ui| {
+        ui.add(
+            Slider::new(&mut p.cutoff, 40.0..=4000.0)
+                .logarithmic(true)
+                .suffix(" Hz")
+                .text("Cutoff"),
+        )
+        .on_hover_text("Where the filter starts and ends each meow");
+        ui.add(
+            Slider::new(&mut p.sweep, 0.0..=20_000.0)
+                .logarithmic(true)
+                .suffix(" Hz")
+                .text("Sweep"),
+        )
+        .on_hover_text("How far a full-velocity note opens the filter");
+        ui.add(
+            Slider::new(&mut p.q, 0.1..=10.0)
+                .logarithmic(true)
+                .text("Resonance (Q)"),
+        );
     });
 }
 

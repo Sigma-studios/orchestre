@@ -635,3 +635,104 @@ fn editing_a_patch_live_keeps_it_playing() {
     e.set_params(&patch);
     assert!(run(&mut e) > 0.02, "note stopped after a settings change");
 }
+
+#[test]
+fn meow_slides_between_held_notes_and_meows_on_each() {
+    use crate::meow::MeowEngine;
+    use orchestre_core::MeowParams;
+    let mut e = MeowEngine::new(MeowParams::default(), SR as f32);
+    let mut out = Vec::new();
+    let block = |e: &mut MeowEngine, out: &mut Vec<f32>| {
+        let (mut l, mut r) = ([0.0f32; 32], [0.0f32; 32]);
+        e.render(&mut l, &mut r);
+        out.extend_from_slice(&l);
+    };
+    e.note_on(57, 1.0, f64::INFINITY);
+    while out.len() < SR as usize / 2 {
+        block(&mut e, &mut out);
+    }
+    // A3 held, then A4: slides an octave up in 120 ms.
+    let at = out.len();
+    e.note_on(69, 1.0, f64::INFINITY);
+    while out.len() < at + SR as usize / 2 {
+        block(&mut e, &mut out);
+    }
+    check_clean(&out);
+    let pitch = |from: f32| {
+        let a = at + (from * SR as f32) as usize;
+        pitch_of(&out[a..a + (0.04 * SR as f32) as usize], SR as f32)
+    };
+    let mid = pitch(0.04);
+    assert!((270.0..360.0).contains(&mid), "mid-slide pitch {mid}");
+    let end = pitch(0.2);
+    assert!((end - 440.0).abs() < 8.0, "slide end {end}");
+    // The new note starts its own meow: it swells from silence.
+    let rms = |from: f32, to: f32| {
+        let (a, b) = (
+            (at as f32 + from * SR as f32) as usize,
+            (at as f32 + to * SR as f32) as usize,
+        );
+        (out[a..b].iter().map(|s| s * s).sum::<f32>() / (b - a) as f32).sqrt()
+    };
+    assert!(rms(0.001, 0.004) < rms(-0.02, 0.0) * 0.5, "no fresh attack");
+}
+
+#[test]
+fn meow_back_to_back_notes_restart_without_sliding() {
+    let mut p = single_note(InstrumentChoice::Meow, 57);
+    let t = &mut p.tracks[0];
+    t.notes[0].len = 3 * PPQ;
+    let id = t.notes[0].id + 1;
+    t.notes.push(Note {
+        id,
+        start: 3 * PPQ,
+        len: 2 * PPQ,
+        pitch: 64,
+        vel: 0.9,
+    });
+    let out = render_song(&Song::from_project(&p), SR, 0.0);
+    check_clean(&out);
+    let left: Vec<f32> = out.iter().step_by(2).copied().collect();
+    let at = (3.0 * 60.0 / p.bpm * SR as f32) as usize;
+    let rms = |from: f32, to: f32| {
+        let (a, b) = (
+            (at as f32 + from * SR as f32) as usize,
+            (at as f32 + to * SR as f32) as usize,
+        );
+        (left[a..b].iter().map(|s| s * s).sum::<f32>() / (b - a) as f32).sqrt()
+    };
+    let before = rms(-0.05, -0.005);
+    assert!(rms(0.001, 0.005) < before * 0.6, "no fresh attack");
+    assert!(rms(0.03, 0.05) > before * 1.5, "no meow on the second note");
+    // No slide: already at E4 (329.6 Hz).
+    let a = at + (0.01 * SR as f32) as usize;
+    let f = pitch_of(&left[a..a + (0.04 * SR as f32) as usize], SR as f32);
+    assert!((f - 329.6).abs() < 6.0, "slid: {f}");
+}
+
+#[test]
+fn meow_polycat_plays_chords() {
+    let mut p = single_note(InstrumentChoice::Meow, 60);
+    let orchestre_core::Instrument::Meow(m) = &mut p.tracks[0].instrument else {
+        unreachable!()
+    };
+    m.polycat = true;
+    m.glide = 0.0;
+    let id = p.tracks[0].notes[0].id;
+    for (k, pitch) in [64u8, 67].into_iter().enumerate() {
+        p.tracks[0].notes.push(Note {
+            id: id + 1 + k as u64,
+            start: 0,
+            len: PPQ,
+            pitch,
+            vel: 0.9,
+        });
+    }
+    let out = render_song(&Song::from_project(&p), SR, 0.0);
+    check_clean(&out);
+    let left: Vec<f32> = out.iter().step_by(2).copied().collect();
+    let x = &left[(0.1 * SR as f32) as usize..(0.4 * SR as f32) as usize];
+    for f in [261.6, 329.6, 392.0] {
+        assert!(energy_at(x, f) > 1e-4, "{f} Hz missing from the chord");
+    }
+}

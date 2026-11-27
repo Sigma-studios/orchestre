@@ -12,6 +12,7 @@ pub mod filter;
 pub mod fx;
 pub mod glottis;
 pub mod mallets;
+pub mod meow;
 pub mod organ;
 pub mod osc;
 pub mod patch;

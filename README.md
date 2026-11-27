@@ -2,18 +2,20 @@
 
 A beginner-friendly music maker. Every sound is synthesized from scratch; no samples. Runs natively and in the browser from one Rust codebase.
 
-**Instruments** (48, grouped in the *Add instrument* menu; rest the pointer on one to hear it):
+**Instruments** (49, grouped in the *Add instrument* menu; rest the pointer on one to hear it):
 
 | Group | Sounds |
 |---|---|
 | Drums & percussion | Kick, snare, clap, rim, hi-hats, toms, crash, cowbell, tambourine, shaker, claves, congas, bongo (3 kit styles) |
-| Keys | Piano, electric piano, jazz / rock / church organ, bell keys, poly brass, house organ, house stab |
+| Keys | Piano, electric piano, jazz / rock / church organ, bell keys, poly brass, house organ, house stab, meow synth |
 | Plucked | Guitar, harp, koto, synth pluck, arp pluck, dark arp |
 | Mallets | Marimba, vibraphone, xylophone, glockenspiel |
 | Bass | Bass, sub bass, 808 bass, wobble bass, bass guitar, acid bass, fat (Moog-style) bass, Reese bass, FM bass, disco bass |
 | Leads | Lead, chiptune, brass, flute, squelch lead (Da Funk style), fat lead, sync lead, rave hoover |
 | Pads | Pad, supersaw, strings, PWM pad, string machine, film brass |
 | Voices & robots | Choir, talk box, robot voice (vocoder), vocoder choir |
+
+The **meow synth** is a singing cat after Knobster's MeowSynth (2009), following [nyasynth](https://github.com/a2aaron/nyasynth)'s recreation: a saw wave through a resonant low-pass filter, with one "MEOW" envelope sweeping both the volume and the filter (about 350 Hz to 7 kHz at full velocity: play loud for a big meow). One note at a time, every note meows again and held notes slide into the next; *Polycat* plays chords.
 
 The classic synth behind most of these has 12, 24 (ladder) and 18 dB (acid) low-pass, high-pass and band-pass filters, a fuzz stage, hard sync, pulse-width modulation, ring modulation, a third oscillator, LFO shapes with tempo sync, three modulation slots, and acid-style accent and slides (loud notes are accented; overlapping notes slide).
 
